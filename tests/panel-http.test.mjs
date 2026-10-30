@@ -271,7 +271,7 @@ test('real panel HTTP: image settings default off, credential saves do not enabl
     assertStatusOnly(key, [localKey]);
     assert.equal((await request(port, '/api/image-generation', { cookie })).json.settings.enabled, false, 'saving a nonblank Key also may not opt into paid generation');
     for (const model of ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini']) {
-      const settings = { ...IMAGE_GENERATION_DEFAULTS, enabled: true, model, size: '1024x1536', quality: 'high', cooldownSeconds: 60, maxPerHour: 1, timeoutSeconds: 30 };
+      const settings = { ...IMAGE_GENERATION_DEFAULTS, enabled: true, model, size: '1024x1536', quality: 'high', timeoutSeconds: 30 };
       const saved = await request(port, '/api/image-generation', { cookie, method: 'PUT', body: settings });
       assert.equal(saved.status, 200, saved.text);
       assert.deepEqual(saved.json, { ok: true, settings, restartRequired: false });
@@ -309,7 +309,7 @@ test('real panel HTTP: image API fences, invalid/oversized payloads and corrupt 
     const marker = 'synthetic-image-sensitive-file-content';
     const invalid = [
       {}, null, [], { settings: IMAGE_GENERATION_DEFAULTS }, { ...IMAGE_GENERATION_DEFAULTS, enabled: 'true' },
-      { ...IMAGE_GENERATION_DEFAULTS, cooldownSeconds: 59 }, { ...IMAGE_GENERATION_DEFAULTS, maxPerHour: 11 },
+      { ...IMAGE_GENERATION_DEFAULTS, timeoutSeconds: 29 },
       { ...IMAGE_GENERATION_DEFAULTS, timeoutSeconds: 301 }, { ...IMAGE_GENERATION_DEFAULTS, quality: 'auto' },
       { ...IMAGE_GENERATION_DEFAULTS, model: 'gpt-image-1' }, { ...IMAGE_GENERATION_DEFAULTS, model: 'dall-e-3' },
       { ...IMAGE_GENERATION_DEFAULTS, baseURL: `https://${marker}.invalid` },

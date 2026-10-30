@@ -16,7 +16,7 @@ import {
 
 const DEFAULTS = {
   enabled: false, model: 'gpt-image-2', size: '1024x1024', quality: 'low',
-  cooldownSeconds: 120, maxPerHour: 3, timeoutSeconds: 180,
+  timeoutSeconds: 180,
 };
 const MODELS = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors', '@cf/black-forest-labs/flux-1-schnell'];
 const SIZES_BY_MODEL = (model) => model === 'Kwai-Kolors/Kolors'
@@ -77,7 +77,7 @@ test('image settings validate every allowed model/size/quality and integer bound
         const value = settings({ enabled: true, model, size, quality });
         assert.deepEqual(validateImageGenerationSettings(value), value);
       }
-  for (const [field, min, max] of [['cooldownSeconds', 60, 3600], ['maxPerHour', 1, 10], ['timeoutSeconds', 30, 300]]) {
+  for (const [field, min, max] of [['timeoutSeconds', 30, 300]]) {
     for (const value of [min, max]) assert.equal(validateImageGenerationSettings(settings({ [field]: value }))[field], value);
     for (const value of [min - 1, max + 1, min + 0.5, String(min), null, true, NaN, Infinity])
       assert.throws(() => validateImageGenerationSettings(settings({ [field]: value })), { code: 'ERR_IMAGE_GENERATION_INVALID' });
@@ -228,11 +228,11 @@ test('image settings UI isolated block loads/saves settings only, validates limi
   assert.equal(calls.at(-1).options.method, 'PUT');
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), settings({ enabled: true }));
   assert.equal(element('btnSaveImageGeneration').disabled, true);
-  element('imageCooldown').value = '59'; element('imageCooldown').oninput();
+  element('imageTimeout').value = '29'; element('imageTimeout').oninput();
   const before = calls.length;
   await sandbox.ui.saveImageGenerationSettings({ preventDefault() {} });
   assert.equal(calls.length, before, 'invalid cooldown must not be submitted');
-  element('imageCooldown').value = '120'; element('imageCooldown').oninput();
+  element('imageTimeout').value = '180'; element('imageTimeout').oninput();
   fail = true;
   await sandbox.ui.saveImageGenerationSettings({ preventDefault() {} });
   assert.equal(element('btnSaveImageGeneration').disabled, true, 'uncertain save requires reread');

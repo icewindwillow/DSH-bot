@@ -103,8 +103,6 @@ npm run panel
 | `model` | `gpt-image-2` | OpenAI：`gpt-image-2` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` / `gpt-image-1.5` / `gpt-image-1-mini`；免费：`Kwai-Kolors/Kolors` |
 | `size` | `1024x1024` | OpenAI：`1024x1024` / `1536x1024` / `1024x1536`；Kolors：`1024x1024` / `960x1280` / `768x1024`；工具保守限制，非 API 最大能力声明 |
 | `quality` | `low` | `low` / `medium` / `high`；仅对 OpenAI 模型生效，Kolors 忽略 |
-| `cooldownSeconds` | `120` | 每会话冷却，整数 `60..3600` 秒 |
-| `maxPerHour` | `3` | 每会话每小时尝试上限，整数 `1..10` |
 | `timeoutSeconds` | `180` | API 请求及响应体读取，整数 `30..300` 秒 |
 
 只接受完整七字段对象，拒绝未知字段、任意 URL 和字符串数字。`gpt-image-1` 已下线，不支持它或 DALL·E。文件限 16 KiB，原子 `0600` 写入；目录祖先或目标符号链接、目标硬链接会被拒绝。
@@ -113,7 +111,7 @@ npm run panel
 - 生图设置下一次调用动态读取；**新 Key 仍需重启**。空白 Key 不自动启用或调用生图。
 - `QQBOT_IMAGE_GENERATION=off` 可额外禁止；`on` 不能越过 JSON 的关闭状态。环境变量改变需要由实际机器人进程继承。
 - 仅当前真实 QQ group/C2C 消息的明确画图请求可授权，且发送者必须是主人、`imagePermission.skill`（缺省 `image-gen`）这个独立生图技能的受众，或好感度达到 `imagePermission.affinityMin`（缺省 60）的成员；详见[生图指南](<image-generation.md#谁能生图主人--生图技能--好感度>)。群聊推荐 `@机器人 /生图 一只看星星的鲸鱼`；自然语句保守识别，不能当作完整 NLP 授权保证。
-- 每次单张、只发本次新 prompt、不附历史/参考图、不自动重试。单进程每小时硬上限 10 次、最多一张在途；失败/取消/不确定 API 尝试也计数，重启清零，不是金额预算。
+- 每次单张、只发本次新 prompt、不附历史/参考图、不自动重试。没有冷却和每小时次数上限（谁能发图由权限名单决定），只保留「同一时刻最多一张在途」；失败/取消/不确定的尝试不重试、不补单。
 
 ## 人格、说话人模块与低打扰
 

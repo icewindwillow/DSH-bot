@@ -11,8 +11,6 @@ export const IMAGE_GENERATION_DEFAULTS = Object.freeze({
   model: 'gpt-image-2',
   size: '1024x1024',
   quality: 'low',
-  cooldownSeconds: 120,
-  maxPerHour: 3,
   timeoutSeconds: 180,
 });
 // The provider is derived from the whitelisted model id, never from a configurable URL.
@@ -90,7 +88,7 @@ export function validateImageGenerationSettings(value) {
   if (!imageGenerationProvider(value.model).sizes.includes(value.size))
     fail(`该模型不支持的图片尺寸；可选 ${imageGenerationProvider(value.model).sizes.join(' / ')}`);
   if (!QUALITIES.has(value.quality)) fail('不支持的图片质量');
-  for (const [field, min, max] of [['cooldownSeconds', 60, 3600], ['maxPerHour', 1, 10], ['timeoutSeconds', 30, 300]]) {
+  for (const [field, min, max] of [['timeoutSeconds', 30, 300]]) {
     if (!Number.isInteger(value[field]) || value[field] < min || value[field] > max)
       fail('生图频率或超时必须为规定范围内的整数');
   }

@@ -5,7 +5,7 @@
  */
 const QQBOT_IMAGE_DEFAULTS = Object.freeze({
     enabled: false, model: 'gpt-image-2', size: '1024x1024', quality: 'low',
-    cooldownSeconds: 120, maxPerHour: 3, timeoutSeconds: 180,
+    timeoutSeconds: 180,
 });
 const QQBOT_IMAGE_PROVIDERS = Object.freeze({
     openai: Object.freeze({
@@ -161,8 +161,6 @@ function qqbotImageReadSettings(profileDir) {
         || typeof value.enabled !== 'boolean' || !QQBOT_IMAGE_MODELS.includes(value.model)
         || !qqbotImageProvider(value.model)?.sizes.includes(value.size)
         || !['low', 'medium', 'high'].includes(value.quality)
-        || !Number.isInteger(value.cooldownSeconds) || value.cooldownSeconds < 60 || value.cooldownSeconds > 3600
-        || !Number.isInteger(value.maxPerHour) || value.maxPerHour < 1 || value.maxPerHour > 10
         || !Number.isInteger(value.timeoutSeconds) || value.timeoutSeconds < 30 || value.timeoutSeconds > 300) throw new Error('invalid image configuration');
     return value;
 }
@@ -309,8 +307,6 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
     const path = process.getBuiltinModule('node:path');
     const profileDir = path.resolve(process.env.QQBOT_PROFILE_DIR ?? path.join(process.env.HOME ?? '', '.dsh', 'profiles', 'qqbot'));
     const lifetime = new AbortController();
-    const attempts = new Map();
-    let globalAttempts = [];
     let busy = false;
     const result = (status, message) => ({ ok: status === 'sent', status, message });
     // The launchd-started bot may not have the panel's .bot-secrets.json in its environment.
@@ -489,31 +485,10 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             if (busy) return result('busy', '已有一张图片正在生成，请稍后重新明确请求；没有排队或自动重试。');
             try { qqbotImageCheckDirectory(path.join(profileDir, 'generated-images')); }
             catch { return result('storage_failed', '本机临时图片目录不安全，请管理员检查；没有发送生图请求。'); }
-            const now = Date.now();
-            for (const [conversation, times] of attempts) {
-                const recent = times.filter((time) => now - time < 3600000);
-                if (recent.length) attempts.set(conversation, recent); else attempts.delete(conversation);
-            }
-            globalAttempts = globalAttempts.filter((time) => now - time < 3600000);
-            const conversation = `${grant.scope}:${grant.targetId}`;
-            const history = attempts.get(conversation) ?? [];
-            if (history.length >= settings.maxPerHour) {
-                console.log(`[im-qqbot] 生图被限流: 每会话每小时上限 ${settings.maxPerHour} 次已达（${conversation}）`);
-                return result('quota_exhausted', `这个会话这一小时的生图次数已用完（每小时 ${settings.maxPerHour} 次）；下个整点前不能再画。失败尝试也计数，不要自动重试。`);
-            }
-            const cooldownLeft = history.length ? Math.ceil((settings.cooldownSeconds * 1000 - (now - history.at(-1))) / 1000) : 0;
-            if (cooldownLeft > 0) {
-                console.log(`[im-qqbot] 生图被限流: 冷却中还需 ${cooldownLeft} 秒（${conversation}）`);
-                return result('cooldown', `生图冷却中，还要等 ${cooldownLeft} 秒；本轮没有发出请求，也不会计费。`);
-            }
-            if (globalAttempts.length >= 10) {
-                console.log('[im-qqbot] 生图被限流: 全进程每小时 10 次已达');
-                return result('quota_exhausted', '本进程这一小时的生图次数已达上限（10 次），稍后再试；不要自动重试。');
-            }
+            // 不再有冷却和每小时次数上限：能发图的人由权限名单控制。
+            // 只保留「同一时刻最多一张在途」这一个技术保护。
             // Reserve before any await. A failed/aborted/uncertain attempt consumes this inbound grant too.
             grant.used = true;
-            attempts.set(conversation, [...history, now]);
-            globalAttempts.push(now);
             busy = true;
             const replyTarget = Object.freeze({ scope: grant.scope, targetId: grant.targetId, msgId: grant.msgId });
             const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(settings.timeoutSeconds * 1000), ...(exec?.signal ? [exec.signal] : [])]);

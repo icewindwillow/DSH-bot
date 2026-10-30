@@ -389,7 +389,7 @@
         <p class="hint">每次单张、不自动重试；只发送本轮新 prompt，不附带群历史或参考图。请求固定发往所选模型对应的官方接口，不经过自定义聊天网关，也不接受自定义接口 URL。硅基流动返回 1 小时有效链接，工具只下载一次并校验 PNG/JPEG；免费模型默认带「AI 生成」水印。</p>
         <p class="hint">生图设置保存后动态生效，无需重启；新填或更换 Key 需要重启机器人才会注入启动环境（运行时也会直接读 <span class="kbd">~/.dsh/.credentials.yaml</span>）。保存设置和刷新状态不会调用生图接口，也不验证额度或权限。</p>
         <fieldset id="imageGenerationFields" disabled style="border:0;padding:0;margin:0">
-          <legend class="muted">频率限制按每个会话单独计算</legend>
+          <legend class="muted">能发图的人由权限名单控制；同一时刻只画一张，不再有冷却或每小时上限</legend>
           <label><input type="checkbox" id="imageEnabled" /> 显式启用生图</label>
           <div class="grid">
             <div class="field"><label for="imageModel">生图模型</label><select id="imageModel">
@@ -409,8 +409,6 @@
             </select></div>
             <div class="field"><label for="imageSize">尺寸</label><select id="imageSize"><option value="1024x1024">1024 × 1024（方形）</option><option value="1536x1024">1536 × 1024（横向）</option><option value="1024x1536">1024 × 1536（纵向）</option><option value="960x1280">960 × 1280（竖版，硅基流动）</option><option value="768x1024">768 × 1024（竖版，硅基流动）</option></select></div>
             <div class="field"><label for="imageQuality">质量（仅 OpenAI）</label><select id="imageQuality"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
-            <div class="field"><label for="imageCooldown">每会话冷却（秒，60–3600）</label><input type="number" id="imageCooldown" min="60" max="3600" step="1" required value="120" /></div>
-            <div class="field"><label for="imageMaxPerHour">每会话每小时上限（1–10）</label><input type="number" id="imageMaxPerHour" min="1" max="10" step="1" required value="3" /></div>
             <div class="field"><label for="imageTimeout">请求超时（秒，30–300）</label><input type="number" id="imageTimeout" min="30" max="300" step="1" required value="180" /></div>
           </div>
         </fieldset>
@@ -986,7 +984,7 @@ $('btnReloadCredentials').onclick = () => {
 // ── 生图设置：独立于上方 credential VM 测试截取段，无 Key / 无付费探测 ──
 const imageGenerationControls = {
   enabled: 'imageEnabled', model: 'imageModel', size: 'imageSize', quality: 'imageQuality',
-  cooldownSeconds: 'imageCooldown', maxPerHour: 'imageMaxPerHour', timeoutSeconds: 'imageTimeout',
+  timeoutSeconds: 'imageTimeout',
 };
 const imageGenerationModels = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors'];
 const imageGenerationFreeModels = ['Kwai-Kolors/Kolors', '@cf/black-forest-labs/flux-1-schnell'];
@@ -1014,7 +1012,7 @@ function validateImageGenerationDraft(settings) {
     || typeof settings.enabled !== 'boolean' || !imageGenerationModels.includes(settings.model)
     || !imageGenerationSizesFor(settings.model).includes(settings.size)
     || !['low', 'medium', 'high'].includes(settings.quality)) throw new Error('Invalid image settings');
-  for (const [key, min, max] of [['cooldownSeconds', 60, 3600], ['maxPerHour', 1, 10], ['timeoutSeconds', 30, 300]]) {
+  for (const [key, min, max] of [['timeoutSeconds', 30, 300]]) {
     if (!Number.isInteger(settings[key]) || settings[key] < min || settings[key] > max) throw new Error('Invalid image limits');
   }
   return settings;
@@ -1051,7 +1049,7 @@ async function saveImageGenerationSettings(event) {
   if (imageGenerationBusy || !imageGenerationLoaded || !imageGenerationDirty) return;
   const settings = {};
   for (const [key, id] of Object.entries(imageGenerationControls)) {
-    settings[key] = key === 'enabled' ? $(id).checked : ['cooldownSeconds', 'maxPerHour', 'timeoutSeconds'].includes(key) ? Number($(id).value) : $(id).value;
+    settings[key] = key === 'enabled' ? $(id).checked : key === 'timeoutSeconds' ? Number($(id).value) : $(id).value;
   }
   try { validateImageGenerationDraft(settings); }
   catch { $('imageGenerationMsg').className = 'msg err'; $('imageGenerationMsg').textContent = '请检查生图枚举选项和整数范围。'; return; }
