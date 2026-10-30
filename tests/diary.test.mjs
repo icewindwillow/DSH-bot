@@ -5,7 +5,7 @@
  * 覆盖：注入文案（最近两篇、按群隔离）、公开版匿名清洗、空数据不注入。
  * 用法：node tests/diary.test.mjs
  */
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +80,25 @@ console.log('diary: 公开版匿名');
     ok('@ 被清掉', !clean.includes('@'), clean);
     ok('长数字被清掉', !/\d{5,}/.test(clean), clean);
     ok('保留正文', clean.includes('逗笑'), clean);
+}
+
+console.log('diary: 树洞配图');
+{
+    const { imagePrompt, makeImage } = diary._test;
+    const prompt = imagePrompt('今天有人夸我的穿搭，开心了一晚上。', '2026-10-30');
+    ok('包含日记原文', prompt.includes('夸我的穿搭'), prompt);
+    ok('带水彩手绘风格', prompt.includes('水彩'), prompt);
+    ok('禁止文字水印', prompt.includes('水印'), prompt);
+    globalThis.qqbotImageGenerateInternal = async () => ({ bytes: Buffer.from('fake-image'), extension: 'png', provider: 'fake', model: 'fake' });
+    const file = await makeImage('今天有人夸我的穿搭。', '2026-10-30');
+    ok('生成私有临时图片', typeof file === 'string' && existsSync(file), String(file));
+    if (file) {
+        ok('临时图片权限 0600', (statSync(file).mode & 0o777) === 0o600);
+        unlinkSync(file);
+    }
+    globalThis.qqbotImageGenerateInternal = async () => { throw new Error('synthetic-image-down'); };
+    ok('失败降级为 undefined', (await makeImage('今天有点困。', '2026-10-30')) === undefined);
+    delete globalThis.qqbotImageGenerateInternal;
 }
 
 rmSync(PROFILE, { recursive: true, force: true });

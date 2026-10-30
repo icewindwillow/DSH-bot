@@ -7,7 +7,7 @@ import { crc32, deflateSync } from 'node:zlib';
 import { IMAGE_GENERATION_DEFAULTS, validateImageGenerationSettings } from '../bot-config-panel/image-generation.mjs';
 
 const source = readFileSync(new URL('../qqbot-patches/image-generation-helper.js', import.meta.url), 'utf8');
-const lib = new Function(`${source}\nreturn { setup: setupOpenAiImageTool, read: qqbotImageReadSettings, defaults: QQBOT_IMAGE_DEFAULTS, models: QQBOT_IMAGE_MODELS, clean: qqbotImageCleanPrompt };`)();
+const lib = new Function(`${source}\nreturn { setup: setupOpenAiImageTool, read: qqbotImageReadSettings, generate: qqbotImageGenerateInternal, defaults: QQBOT_IMAGE_DEFAULTS, models: QQBOT_IMAGE_MODELS, clean: qqbotImageCleanPrompt };`)();
 const PNGS = new Map();
 function png(size = '1024x1024') {
   if (PNGS.has(size)) return PNGS.get(size);
@@ -472,6 +472,19 @@ test('cloudflare prompts are understood, completed and rewritten to English befo
   assert.equal(calls[0].messages[0].content[0].text, '画只戴墨镜的柯基在冲浪');
   assert.equal(JSON.parse(f.requests[0].body).prompt, 'a corgi wearing sunglasses surfing a wave, flat illustration, bright colors');
   assert.ok(output.message.includes('英文'));
+});
+
+test('background generator reuses settings without an inbound grant and returns bytes only', async (t) => {
+  const f = fixture(t);
+  f.respond(() => reply());
+  const generated = await lib.generate({ get: () => undefined }, f.profile, '一篇日记的配图');
+  assert.equal(generated.extension, 'png');
+  assert.ok(generated.bytes.length > 0);
+  assert.equal(generated.provider, 'openai');
+  assert.equal(f.sent.length, 0, 'background generation never sends to QQ');
+  noArtifacts(f);
+  f.save({ enabled: false });
+  await assert.rejects(lib.generate({ get: () => undefined }, f.profile, '一篇日记的配图'), /disabled/);
 });
 
 test('a failed rewrite falls back to the original prompt and says so', async (t) => {

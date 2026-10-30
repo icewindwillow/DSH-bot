@@ -299,6 +299,118 @@ function qqbotImageDecodeCloudflare(data, size) {
     return qqbotImageFromBase64(data?.result?.image, size);
 }
 
+// The launchd-started bot may not have the panel's .bot-secrets.json in its environment.
+// Resolve the same credential the host uses, then the DSH credentials file, without logging it.
+async function qqbotImageResolveKey(ctx, credential) {
+    const valid = (value) => (typeof value === 'string' && value.trim() !== '' && !/[\r\n\u0000]/.test(value) ? value.trim() : undefined);
+    const fromEnvironment = valid(process.env[credential]);
+    if (fromEnvironment) return fromEnvironment;
+    try {
+        const credentials = ctx?.get?.('credentials');
+        if (credentials) {
+            const { credentialRef } = await import('@deepseek-ai/dsh-credentials');
+            const resolved = valid((await credentials.resolve(credentialRef(credential)))?.value);
+            if (resolved) return resolved;
+        }
+    } catch { /* Fall back to the local credentials file below. */ }
+    try {
+        const hostFs = process.getBuiltinModule('node:fs');
+        const hostOs = process.getBuiltinModule('node:os');
+        const hostPath = process.getBuiltinModule('node:path');
+        const text = hostFs.readFileSync(hostPath.join(hostOs.homedir(), '.dsh', '.credentials.yaml'), 'utf8');
+        const match = text.match(new RegExp(`^\\s*${credential}:\\s*(\\S.*)$`, 'm'));
+        return valid(match?.[1]?.replace(/^['"]|['"]$/g, '').trim());
+    } catch { return undefined; }
+}
+// 只给「只认英文」的模型用：先让聊天模型理解意图、补全画面，再产出英文提示词。
+async function qqbotImageRewritePrompt(ctx, text, signal) {
+    let llm;
+    try { llm = ctx?.get?.('llm'); } catch { llm = undefined; }
+    if (!llm || typeof llm.stream !== 'function') return '';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    const relay = () => controller.abort();
+    signal?.addEventListener?.('abort', relay, { once: true });
+    let out = '';
+    try {
+        for await (const chunk of llm.stream({
+            provider: process.env.QQBOT_IMAGE_PROMPT_PROVIDER ?? 'opencode-go',
+            model: process.env.QQBOT_IMAGE_PROMPT_MODEL ?? 'deepseek-v4.1-flash',
+            system: [
+                '你在给图片模型 FLUX.1 写提示词。用户会用中文说想要什么画面，可能很简略、有错别字、口语化，或者只有半句话。',
+                '你的任务：理解他真正想要的画面，补全成一条英文提示词，包含主体、动作、场景、风格、构图或镜头、光线、色调、画幅比例。',
+                '保留用户明确提出的要求，不要改主题；不要加入真实人名、账号、群号或任何隐私；不要解释、不要寒暄。',
+                '只输出这一条英文提示词，单行，不超过 300 词。',
+            ].join('\n'),
+            messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+            maxTokens: 400, reasoningEffort: 'low', signal: controller.signal,
+        })) {
+            if (!chunk) continue;
+            if (chunk.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text;
+            else if (chunk.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) return '';
+        }
+    } catch { return ''; }
+    finally {
+        clearTimeout(timer);
+        signal?.removeEventListener?.('abort', relay);
+    }
+    return qqbotImageCleanPrompt(out);
+}
+
+/**
+ * 后台生图（供日记这类管理员知情的自动发布使用，不经过模型工具与入站授权）。
+ * 与 generate_image 共用同一份设置、白名单模型、凭据解析与结果校验；
+ * 只生成并返回字节，不存储、不发送、不自动重试。失败直接抛出，由调用方降级。
+ */
+async function qqbotImageGenerateInternal(ctx, profileDir, prompt, options = {}) {
+    const settings = options.settings ?? qqbotImageReadSettings(profileDir);
+    if (!settings.enabled || process.env.QQBOT_IMAGE_GENERATION === 'off') throw new Error('image generation disabled');
+    const provider = qqbotImageProvider(settings.model);
+    if (!provider) throw new Error('image model not allowed');
+    const key = await qqbotImageResolveKey(ctx, provider.credential);
+    if (!key) throw new Error('missing image credential');
+    let accountId;
+    if (provider.accountCredential) {
+        accountId = await qqbotImageResolveKey(ctx, provider.accountCredential);
+        if (!/^[0-9a-f]{32}$/i.test(accountId ?? '')) throw new Error('missing image account');
+    }
+    let text = String(prompt ?? '').trim();
+    if (text === '' || text.length > 4000 || Buffer.byteLength(text) > 16384) throw new Error('invalid image prompt');
+    if (provider.maxPrompt && text.length > provider.maxPrompt) text = text.slice(0, provider.maxPrompt).trim();
+    const signal = options.signal ?? AbortSignal.timeout(settings.timeoutSeconds * 1000);
+    let rewritten = false;
+    if (provider.rewritePrompt) {
+        const english = await qqbotImageRewritePrompt(ctx, text, signal);
+        if (english) { text = english; rewritten = true; }
+    }
+    signal.throwIfAborted();
+    const requestBody = provider.result === 'b64_json'
+        ? { model: settings.model, prompt: text, n: 1, size: settings.size, quality: settings.quality, output_format: 'png' }
+        : provider.result === 'url'
+            ? { model: settings.model, prompt: text, image_size: settings.size }
+            : { prompt: text, steps: 4 };
+    const endpoint = provider.accountCredential ? provider.endpoint.replace('{account}', accountId) : provider.endpoint;
+    const response = await fetch(endpoint, {
+        method: 'POST', redirect: 'error', signal,
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`image provider status ${response.status}`);
+    }
+    const data = await qqbotImageReadResponse(response, signal);
+    let image;
+    if (provider.result === 'b64_json') image = qqbotImageDecodeBase64(data, settings.size);
+    else if (provider.result === 'cloudflare_b64') image = qqbotImageDecodeCloudflare(data, settings.size);
+    else {
+        const downloaded = await qqbotImageDownload(qqbotImageResultUrl(data), signal);
+        image = { bytes: downloaded, ...qqbotImageInspect(downloaded, settings.size, false) };
+    }
+    signal.throwIfAborted();
+    return { ...image, provider: provider.name, model: settings.model, rewritten };
+}
+
 function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
     let tools;
     try { tools = ctx.get('tools'); } catch { return; }
@@ -309,63 +421,6 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
     const lifetime = new AbortController();
     let busy = false;
     const result = (status, message) => ({ ok: status === 'sent', status, message });
-    // The launchd-started bot may not have the panel's .bot-secrets.json in its environment.
-    // Resolve the same credential the host uses, then the DSH credentials file, without logging it.
-    const resolveImageKey = async (credential) => {
-        const valid = (value) => (typeof value === 'string' && value.trim() !== '' && !/[\r\n\u0000]/.test(value) ? value.trim() : undefined);
-        const fromEnvironment = valid(process.env[credential]);
-        if (fromEnvironment) return fromEnvironment;
-        try {
-            const credentials = ctx.get?.('credentials');
-            if (credentials) {
-                const { credentialRef } = await import('@deepseek-ai/dsh-credentials');
-                const resolved = valid((await credentials.resolve(credentialRef(credential)))?.value);
-                if (resolved) return resolved;
-            }
-        } catch { /* Fall back to the local credentials file below. */ }
-        try {
-            const hostFs = process.getBuiltinModule('node:fs');
-            const hostOs = process.getBuiltinModule('node:os');
-            const hostPath = process.getBuiltinModule('node:path');
-            const text = hostFs.readFileSync(hostPath.join(hostOs.homedir(), '.dsh', '.credentials.yaml'), 'utf8');
-            const match = text.match(new RegExp(`^\\s*${credential}:\\s*(\\S.*)$`, 'm'));
-            return valid(match?.[1]?.replace(/^['"]|['"]$/g, '').trim());
-        } catch { return undefined; }
-    };
-    // 只给「只认英文」的模型用：先让聊天模型理解意图、补全画面，再产出英文提示词。
-    const rewriteImagePrompt = async (text, signal) => {
-        let llm;
-        try { llm = ctx.get('llm'); } catch { llm = undefined; }
-        if (!llm || typeof llm.stream !== 'function') return '';
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 20000);
-        const relay = () => controller.abort();
-        signal?.addEventListener?.('abort', relay, { once: true });
-        let out = '';
-        try {
-            for await (const chunk of llm.stream({
-                provider: process.env.QQBOT_IMAGE_PROMPT_PROVIDER ?? 'opencode-go',
-                model: process.env.QQBOT_IMAGE_PROMPT_MODEL ?? 'deepseek-v4.1-flash',
-                system: [
-                    '你在给图片模型 FLUX.1 写提示词。用户会用中文说想要什么画面，可能很简略、有错别字、口语化，或者只有半句话。',
-                    '你的任务：理解他真正想要的画面，补全成一条英文提示词，包含主体、动作、场景、风格、构图或镜头、光线、色调、画幅比例。',
-                    '保留用户明确提出的要求，不要改主题；不要加入真实人名、账号、群号或任何隐私；不要解释、不要寒暄。',
-                    '只输出这一条英文提示词，单行，不超过 300 词。',
-                ].join('\n'),
-                messages: [{ role: 'user', content: [{ type: 'text', text }] }],
-                maxTokens: 400, reasoningEffort: 'low', signal: controller.signal,
-            })) {
-                if (!chunk) continue;
-                if (chunk.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text;
-                else if (chunk.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) return '';
-            }
-        } catch { return ''; }
-        finally {
-            clearTimeout(timer);
-            signal?.removeEventListener?.('abort', relay);
-        }
-        return qqbotImageCleanPrompt(out);
-    };
     const authorize = (record, msg, userMessage) => {
         if (!record || !msg) return;
         // Every real inbound replaces the previous grant, including non-image requests.
@@ -441,11 +496,11 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             if (!settings.enabled || process.env.QQBOT_IMAGE_GENERATION === 'off') return result('disabled', '生图默认关闭，请管理员在本机面板明确开启，并确认费用与隐私。');
             const provider = qqbotImageProvider(settings.model);
             if (!provider) return result('configuration_error', '生图模型不在允许清单内，请管理员在本机面板重新选择；没有发送生图请求。');
-            const key = await resolveImageKey(provider.credential);
+            const key = await qqbotImageResolveKey(ctx, provider.credential);
             if (!key) return result('missing_key', `未配置可用的 ${provider.credential}；在本机面板或 DSH 凭据中保存后，重启机器人加载。`);
             let accountId;
             if (provider.accountCredential) {
-                accountId = await resolveImageKey(provider.accountCredential);
+                accountId = await qqbotImageResolveKey(ctx, provider.accountCredential);
                 if (!/^[0-9a-f]{32}$/i.test(accountId ?? '')) return result('missing_key', `未配置有效的 ${provider.accountCredential}（32 位十六进制账号 ID）；在本机面板或 DSH 凭据中保存后，重启机器人加载。`);
             }
             if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some((name) => name !== 'prompt')
@@ -500,7 +555,7 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
                 let prompt = args.prompt.trim();
                 let rewritten = false;
                 if (provider.rewritePrompt) {
-                    const english = await rewriteImagePrompt(prompt, signal);
+                    const english = await qqbotImageRewritePrompt(ctx, prompt, signal);
                     if (english) { prompt = english; rewritten = true; }
                     signal.throwIfAborted();
                 }

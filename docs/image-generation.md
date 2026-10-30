@@ -140,6 +140,17 @@ export QQBOT_IMAGE_GENERATION=off
 
 因此不支持靠“照上次的要求再做”“引用之前那条”来自动付费；请在当前消息里重新写完整、明确的请求。**群聊仍需按现有门控明确 @，推荐 `/生图 描述`。** 守卫是保守的程序限制，不是对任意自然语言都能正确判意的承诺。
 
+### 树洞日记配图（后台自动，独立于入站授权）
+
+开启日记发布后，每篇**对外发帖的日记**（每天那篇公开树洞日记 + 每条碎碎念）在发帖前会复用同一份生图设置与白名单模型画一张配图，随帖子一起上传：
+
+- 不配图的是**不对外投递**的群内日记和事件日记——它们只写进 `qqbot-diary.jsonl` 供群内提示词注入，没有图片投递路径。
+- 仍然要求 `qqbot-image-generation.json` 已 `enabled:true` 且凭据可用；`QQBOT_IMAGE_GENERATION=off` 同样会禁止。
+- 不经过模型工具，也不需要入站授权；prompt 只使用已经匿名过的正文，不发内部日记里的人和细节。
+- 失败、超时（默认 90 秒，可用 `QQBOT_DIARY_IMAGE_TIMEOUT_S` 调整）或未配置凭据时**只发文字**，不阻塞发帖、不自动重试、不补画。
+- `QQBOT_DIARY_IMAGE=off` 可单独关闭配图而保留日记。
+- 发帖目标默认仍是树洞（`QQBOT_DIARY_GUILD` / `QQBOT_DIARY_CHANNEL`）；`QQBOT_DIARY_CHANNELS` 可用 `guild:channel` 或裸 `channel` 逗号分隔追加其他频道，同一张图逐频道发送。
+
 ## 发送给图片服务的内容
 
 请求地址由所选模型唯一决定，没有可配置的 endpoint：

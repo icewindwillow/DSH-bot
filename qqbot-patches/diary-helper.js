@@ -9,7 +9,10 @@
  *
  * 群内注入：每群最近 2 篇日记（order 96，排在心情之后），约 100 token。
  * 开关：默认关闭，QQBOT_DIARY=on 开启本地日记；QQBOT_DIARY=dry 只写不注入、不发帖。
- * 频道：QQBOT_DIARY_GUILD / QQBOT_DIARY_CHANNEL / QQBOT_CHANNEL_CLI 可覆盖。
+ * 配图：公开日记与碎碎念发帖前复用「生图」通道画一张，失败/超时只发文字；群内/事件日记只进记忆、不配图。
+ *       QQBOT_DIARY_IMAGE=off 关闭，超时可用 QQBOT_DIARY_IMAGE_TIMEOUT_S（默认 90 秒）调整。
+ * 频道：QQBOT_DIARY_GUILD / QQBOT_DIARY_CHANNEL / QQBOT_CHANNEL_CLI 可覆盖；
+ *       用 QQBOT_DIARY_CHANNELS 追加其他频道（guild:channel 或 channel，逗号分隔），默认只发树洞。
  */
 function setupDiary(ctx, logger) {
     if (globalThis.__qqbotDiary)
@@ -29,6 +32,10 @@ function setupDiary(ctx, logger) {
     const GUILD = process.env.QQBOT_DIARY_GUILD ?? '';
     const CHANNEL = process.env.QQBOT_DIARY_CHANNEL ?? '';
     const CLI = process.env.QQBOT_CHANNEL_CLI ?? `${process.env.HOME ?? ''}/.npm-global/bin/tencent-channel-cli`;
+    // 树洞配图：复用「生图」通道的设置与白名单；生图本身关闭时自动不画，失败只发文字。
+    const IMAGE_ON = String(process.env.QQBOT_DIARY_IMAGE ?? 'on').toLowerCase() !== 'off';
+    const path = process.getBuiltinModule?.('node:path');
+    const crypto = process.getBuiltinModule?.('node:crypto');
     const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     const readAll = () => {
@@ -176,24 +183,91 @@ function setupDiary(ctx, logger) {
         return out.trim();
     };
 
-    const publish = (text) => {
-        if (DRY || process.env.QQBOT_DIARY_PUBLISH !== 'on' || !GUILD || !CHANNEL)
+    // 配图用已经匿名过的公开日记，不把内部日记里的人和细节发给图片服务。
+    const imagePrompt = (text, day) => [
+        '给下面这篇第一人称日记画一张配图，像夹在日记本里的一张手绘小画。',
+        `日期：${day}。日记：${String(text).replace(/\s+/g, ' ').trim().slice(0, 420)}`,
+        '只画日记里真实提到的一个安静瞬间，不要补充日记没有的人和事。',
+        '风格：柔和水彩/水粉手绘插画，暖色调、自然光、轻微纸纹，方形或竖版构图，留白。',
+        '主角是写日记的人设本人（例如猫娘就画浅色猫耳和猫尾），按人设的身份与气质画，安静、害羞、有生活感。',
+        '不要文字、标题、logo、水印、对话框；不要真实明星或真人面孔；不要血腥、恐怖或暴露画面。',
+    ].join('\n');
+
+    const removeImage = (file) => {
+        if (!file)
+            return;
+        try { fs.unlinkSync(file); } catch { /* 临时文件清理失败不影响发帖 */ }
+    };
+
+    /** 后台生图并落到私有临时目录；失败或超时返回 undefined，日记照常发文字。 */
+    const makeImage = async (text, day) => {
+        if (!IMAGE_ON || !path || typeof qqbotImageGenerateInternal !== 'function')
+            return undefined;
+        const rawTimeout = Number(process.env.QQBOT_DIARY_IMAGE_TIMEOUT_S ?? 90);
+        const seconds = Number.isFinite(rawTimeout) && rawTimeout >= 30 && rawTimeout <= 300 ? rawTimeout : 90;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), seconds * 1000);
+        try {
+            const generated = await qqbotImageGenerateInternal(ctx, profileDir, imagePrompt(text, day), { signal: controller.signal });
+            const folder = (typeof qqbotImageCheckDirectory === 'function')
+                ? qqbotImageCheckDirectory(path.join(profileDir, 'generated-images'), true)
+                : path.join(profileDir, 'generated-images');
+            fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+            const suffix = (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)).slice(0, 16);
+            const file = path.join(folder, `diary-${day}-${Date.now()}-${suffix}.${generated.extension}`);
+            fs.writeFileSync(file, generated.bytes, { mode: 0o600, flag: 'wx' });
+            console.log(`[im-qqbot] 日记配图已生成 provider=${generated.provider} model=${generated.model}${generated.rewritten ? ' rewritten' : ''}`);
+            return file;
+        }
+        catch (err) {
+            console.log(`[im-qqbot] 日记配图失败（仅发文字）: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    };
+
+    const canPublish = () => !DRY && process.env.QQBOT_DIARY_PUBLISH === 'on' && GUILD !== '' && CHANNEL !== '';
+
+    // 发帖目标：默认树洞；QQBOT_DIARY_CHANNELS 可追加其他频道（guild:channel 或 channel，逗号分隔）。
+    const channels = () => {
+        const list = [{ guild: GUILD, channel: CHANNEL }];
+        const extra = String(process.env.QQBOT_DIARY_CHANNELS ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+        for (const item of extra) {
+            const [guild, channel] = item.includes(':') ? item.split(':').map((part) => part.trim()) : [GUILD, item];
+            if (guild === '' || channel === '' || list.some((target) => target.guild === guild && target.channel === channel))
+                continue;
+            list.push({ guild, channel });
+        }
+        return list;
+    };
+
+    const publish = (text, imagePath) => {
+        if (!canPublish())
             return false;
         try {
             const { spawnSync } = process.getBuiltinModule?.('node:child_process') ?? {};
             if (typeof spawnSync !== 'function')
                 return false;
-            const res = spawnSync(CLI, [
-                'feed', 'publish-feed',
-                '--guild-id', GUILD,
-                '--channel-id', CHANNEL,
-                '--content', text,
-                '--json',
-            ], { encoding: 'utf8', timeout: 30000, env: process.env });
-            const stdout = String(res.stdout ?? '');
-            const ok = stdout.includes('"success":true');
-            console.log(`[im-qqbot] 树洞发帖${ok ? '成功' : '失败'}${ok ? '' : `：${stdout.slice(0, 120) || res.error?.message || ''}`}`);
-            return ok;
+            let published = false;
+            for (const target of channels()) {
+                const args = [
+                    'feed', 'publish-feed',
+                    '--guild-id', target.guild,
+                    '--channel-id', target.channel,
+                    '--content', text,
+                    '--json',
+                ];
+                if (imagePath)
+                    args.push('--image', imagePath);
+                const res = spawnSync(CLI, args, { encoding: 'utf8', timeout: imagePath ? 60000 : 30000, env: process.env });
+                const stdout = String(res.stdout ?? '');
+                const ok = stdout.includes('"success":true');
+                published = published || ok;
+                console.log(`[im-qqbot] 树洞发帖${ok ? '成功' : '失败'} ${target.guild}/${target.channel}${ok ? '' : `：${stdout.slice(0, 120) || res.error?.message || ''}`}`);
+            }
+            return published;
         }
         catch (err) {
             console.log(`[im-qqbot] 树洞发帖异常: ${err instanceof Error ? err.message : String(err)}`);
@@ -245,8 +319,16 @@ function setupDiary(ctx, logger) {
         if (publicText === '')
             return;
         const safe = anonymize(publicText).slice(0, 800);
-        const published = publish(safe);
-        append({ at: Date.now(), date: today, gid: 'public', name: '树洞', text: safe, published });
+        // 只有真的要发帖时才出图，避免 dry 模式或未配置频道时白白调用图片服务。
+        const imagePath = canPublish() ? await makeImage(safe, today) : undefined;
+        let published = false;
+        try {
+            published = publish(safe, imagePath);
+        }
+        finally {
+            removeImage(imagePath);
+        }
+        append({ at: Date.now(), date: today, gid: 'public', name: '树洞', text: safe, published, image: imagePath ? 'generated' : undefined });
     };
 
     // ── 事件日记：短时间高强度互动写一篇（interaction-helper 触发）──
@@ -329,15 +411,22 @@ function setupDiary(ctx, logger) {
         if (text === '')
             return '';
         const safe = anonymize(text).slice(0, 200);
-        const published = publish(safe);
+        const imagePath = canPublish() ? await makeImage(safe, day) : undefined;
+        let published = false;
+        try {
+            published = publish(safe, imagePath);
+        }
+        finally {
+            removeImage(imagePath);
+        }
         if (musingState.day !== day) {
             musingState.day = day;
             musingState.count = 0;
         }
         musingState.lastAt = Date.now();
         musingState.count += 1;
-        append({ at: Date.now(), date: day, gid: 'public', name: '碎碎念', type: 'musing', text: safe, published });
-        console.log(`[im-qqbot] 树洞碎碎念${published ? '已发' : '未发'}: ${safe.slice(0, 30)}…`);
+        append({ at: Date.now(), date: day, gid: 'public', name: '碎碎念', type: 'musing', text: safe, published, image: imagePath ? 'generated' : undefined });
+        console.log(`[im-qqbot] 树洞碎碎念${published ? '已发' : '未发'}${imagePath ? '（配图）' : ''}: ${safe.slice(0, 30)}…`);
         return safe;
     };
     const musingTimer = setInterval(() => { void musing(); }, 30 * 60 * 1000);
@@ -348,7 +437,7 @@ function setupDiary(ctx, logger) {
     if (typeof timer.unref === 'function')
         timer.unref();
 
-    globalThis.__qqbotDiary = { promptLine, runOnce, readAll, event, musing, _test: { anonymize, localDay } };
+    globalThis.__qqbotDiary = { promptLine, runOnce, readAll, event, musing, _test: { anonymize, localDay, imagePrompt, makeImage, channels } };
     console.log(`[im-qqbot] 自传日记已启用（每天 04:00 后写，${DRY ? 'dry 模式不注入不发帖' : '本地日记模式；对外发布另需显式开启'}）`);
 }
 /* <<< dsh-qqbot-patch:diary-helper <<< */
