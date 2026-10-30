@@ -419,6 +419,6 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             }
         },
     });
-    logger?.info?.('im-qqbot: generate_image registered (whitelisted providers, explicit request and local opt-in required)');
+    console.log('[im-qqbot] 生图工具已注册（白名单模型，需明确请求 + 本地开启）');
 }
 /* <<< dsh-qqbot-patch:image-generation-helper <<< */
