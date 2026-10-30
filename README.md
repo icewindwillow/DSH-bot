@@ -15,7 +15,7 @@ DSH-bot 是基于 **DeepSeek Harness（DSH）与上游 `@tencent-connect/dsh-qqb
 | 对话不总像第一次见面 | 关系状态、心情和事件线索参与回应；这些是可检查的程序状态，不是机器人真的有情感 |
 | 能接梗，也能安静待着 | 唤醒词、对话窗口、按群唤醒指数和静默回应共同控制打扰程度 |
 | 群友发过的图，不必反复翻聊天记录 | 媒体归档、搜图、收藏和发回当前会话；启用前请先获得成员理解与同意 |
-| 明确说“画一张”，才使用生图 | 可选单张生图与 QQ 回传（OpenAI 付费，或硅基流动 Kolors / Cloudflare flux 免费额度）；默认关闭，只发本次新 prompt，不附群历史，不自动重试 |
+| 只有名单里的人能画图 | 可选单张生图与 QQ 回传（OpenAI 付费 / 硅基流动 Kolors 免费 / Cloudflare flux 免费额度）；默认关闭，只发本次新 prompt，不附群历史，不自动重试 |
 | 每条消息都送主模型，很贵 | 先用便宜的**判断模型**做门控与分类，主模型只处理真正值得回的消息，大幅节省 Token |
 | 配置不想手改一大堆 JSON | 本机网页管理 API Key、模型、人格、成员模块、唤醒指数与图库 |
 | 切模型，联网行为也跟着切 | 搜索/读取按实际请求路由选择后端；读不到就明确说读不到，不把搜索摘要伪装成文章原文 |
@@ -56,11 +56,21 @@ DSH-bot 是基于 **DeepSeek Harness（DSH）与上游 `@tencent-connect/dsh-qqb
 
 官方 README 明确警告：**不要安装 npm 上同名的非官方包**。我们核对了官方 [v2.7.3 Release](https://github.com/Ebony-Vinyl/dsh-our-free-model/releases/tag/v2.7.3) 的发布制品，按[免费模型接入指南](<docs/free-models.md>)安装，而不是猜一条 `npm install`。
 
-## 也能画图，但由你明确开启
+## 也能画图：三家可选，权限说了算
 
-可选工具 `generate_image` 使用自己的图片 Key（OpenAI，或硅基流动 Kolors / Cloudflare flux-1-schnell 这类免费或带免费额度的模型），生成单张图片并回传当前 QQ 群聊或 C2C。**默认关闭、可能收费，不自动重试**；与聊天 provider 独立，可以 DeepSeek / 免费模型聊天、OpenAI 生图。只发送本次新 prompt，不自动附带群历史或参考图。
+可选工具 `generate_image` 生成单张图片并回传当前 QQ 群聊或 C2C。**默认关闭**，与聊天 provider 独立——可以 DeepSeek 聊天、别家生图。
 
-想先零成本试玩，可在[硅基流动](https://cloud.siliconflow.cn/)创建 `SILICONFLOW_API_KEY` 并选择 `Kwai-Kolors/Kolors`（免费模型，通常带 AI 水印）。在“API 密钥 / QQ 连接”页下方配置；填 Key 不会自动启用。建议在群里明确发送 `@机器人 /生图 一只看星星的鲸鱼`。当前范围为 QQ 官方插件 0.5.2 的 group/C2C，不宣称支持频道或 dm。次数限制不是金额预算，真实 QQ/API 仍需管理员授权验收。详见[生图指南与边界](<docs/image-generation.md>)。
+| 模型 | 服务商 | 费用 | 特点 |
+| --- | --- | --- | --- |
+| `gpt-image-2` 等 | OpenAI | 按官方计费 | 质量最好，中文原生 |
+| `Kwai-Kolors/Kolors` | 硅基流动 | 当前免费（需实名认证） | 中文友好，带「AI 生成」水印 |
+| `@cf/black-forest-labs/flux-1-schnell` | Cloudflare Workers AI | 每日免费额度（1024² / 4 步约 170 张） | 只认英文，发送前自动补全并翻译 |
+
+**谁能画**：主人、`image-gen` 这个独立技能（`qqbot-role-skills.json`）的受众、或好感度达到门槛（缺省 60）的成员。有权限的人直接说人话就行——「画只戴墨镜的柯基在冲浪」——不用打 `/生图`；没权限的人说什么都不会产生请求。生图权限是一个独立技能，不会因为某人有别的角色技能就顺带获得。
+
+**边界**：一次请求一张、同一时刻一张在途、不自动重试、只发本次 prompt、不附群历史或参考图；Cloudflare 的英文改写失败时退回原文并在回执里注明。没有冷却和每小时次数上限——能发图的人由权限名单控制。
+
+**Key 不会进仓库**：面板把 Key 写进所选 profile 的 `.bot-secrets.json`（`0600`），运行时也会直接读 `~/.dsh/.credentials.yaml`；仓库里只有 `examples/.env.example` 的空占位，没有任何真实密钥。详见[生图指南与边界](<docs/image-generation.md>)。
 
 ## 先跑起来
 
