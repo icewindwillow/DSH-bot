@@ -197,3 +197,27 @@ test('published interaction/person-card/events/vector chain deploys in dependenc
   ok(f.run('--check', only)); ok(f.run(only)); assert.deepEqual(snapshot(f.profile), deployed);
   ok(f.run('--revert')); assert.deepEqual(readFileSync(bootstrap), original);
 });
+
+test('published image helpers deploy with nested registration and real inbound grant/revoke lifecycle', async (t) => {
+  const f = fixture(t);
+  const bootstrap = f.put(join(f.dist, 'gateway/bootstrap.js'), 'export function setup(ctx, bot, manager, config, logger){\n    setupBotControl(ctx, manager, config, logger);\n}\n');
+  const inbound = f.put(join(f.dist, 'transport/inbound.js'), 'export async function inbound(record, msg, message){\n    record.agent.followup(message);\n    try {\n        await record.agent.whenIdle();\n    }\n    catch {}\n}\n');
+  for (const name of ['media-archive', 'image-generation-helper', 'image-generation-tool', 'image-generation-inbound', 'image-generation-revoke']) {
+    f.put(join(f.snippets, name + '.js'), readFileSync(join(root, 'qqbot-patches', name + '.js')));
+  }
+  const before = { bootstrap: readFileSync(bootstrap), inbound: readFileSync(inbound) };
+  const only = '--only=media-archive,image-generation-helper,image-generation-tool,image-generation-inbound,image-generation-revoke';
+  ok(f.run('--plan', only)); assert.deepEqual(readFileSync(bootstrap), before.bootstrap); assert.deepEqual(readFileSync(inbound), before.inbound);
+  ok(f.run(only)); const deployed = snapshot(f.profile); ok(f.run('--check', only)); ok(f.run(only)); assert.deepEqual(snapshot(f.profile), deployed);
+  assert.match(readFileSync(bootstrap, 'utf8'), /setupOpenAiImageTool\(ctx, bot, manager, config, logger\)/);
+  const module = await import(pathToFileURL(inbound).href);
+  const originalAuthorize = globalThis.__qqbotImageGenerationAuthorize;
+  t.after(() => { if (originalAuthorize === undefined) delete globalThis.__qqbotImageGenerationAuthorize; else globalThis.__qqbotImageGenerationAuthorize = originalAuthorize; });
+  for (const reject of [false, true]) {
+    const message = { id: 'synthetic-inbound-user' }, msg = { messageId: 'synthetic-inbound-qq' };
+    const record = { agent: { followup(value) { assert.equal(value, message); assert.equal(record.__qqbotImageGenerationGrant.msgId, msg.messageId); }, async whenIdle() { if (reject) throw new Error('synthetic-idle-error'); } } };
+    globalThis.__qqbotImageGenerationAuthorize = (target, raw, value) => { assert.equal(value, message); target.__qqbotImageGenerationGrant = { msgId: raw.messageId }; };
+    await module.inbound(record, msg, message); assert.equal(record.__qqbotImageGenerationGrant, undefined);
+  }
+  ok(f.run('--revert')); assert.deepEqual(readFileSync(bootstrap), before.bootstrap); assert.deepEqual(readFileSync(inbound), before.inbound);
+});

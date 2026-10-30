@@ -738,6 +738,34 @@ const PATCHES = [
     ],
     needsFs: false,
   },
+  {
+    name: 'image-generation-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'image-generation-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'image-generation-tool',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'image-generation-tool.js',
+    anchor: ['    setupMediaArchive(ctx, bot, manager, config, logger);'],
+    needsFs: false,
+  },
+  {
+    name: 'image-generation-inbound',
+    file: join(PKG, 'transport', 'inbound.js'),
+    snippet: 'image-generation-inbound.js',
+    anchor: ['    record.agent.followup(message);'],
+    needsFs: false,
+  },
+  {
+    name: 'image-generation-revoke',
+    file: join(PKG, 'transport', 'inbound.js'),
+    snippet: 'image-generation-revoke.js',
+    anchor: ['        await record.agent.whenIdle();'],
+    needsFs: false,
+  },
 ];
 
 // Deployment never copies skills, seeds JSON, or touches credentials. Initialize those separately.

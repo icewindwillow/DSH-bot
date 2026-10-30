@@ -1,6 +1,6 @@
 # 配置指南
 
-[返回首页](<../README.md>) · [部署](<deployment.md>) · [隐私](<privacy.md>)
+[返回首页](<../README.md>) · [部署](<deployment.md>) · [生图](<image-generation.md>) · [隐私](<privacy.md>)
 
 ## 先选对 profile
 
@@ -48,9 +48,9 @@ npm run panel
 | --- | --- | --- |
 | `QQBOT_APPID` | 腾讯机器人应用 ID | 使用 QQ 接入需要 |
 | `QQBOT_SECRET` | 腾讯机器人应用 Secret | 使用 QQ 接入需要 |
-| `OPENAI_API_KEY` | OpenAI 官方聊天/联网辅助等 | 使用对应服务时 |
+| `OPENAI_API_KEY` | OpenAI 官方聊天、联网辅助与可选单张生图 | 使用对应服务时；生图不要求聊天 provider 也是 OpenAI |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 API / 对应搜索读取 | 使用对应服务时 |
-| `XIANGXIN_API_KEY` | 象信结构化判定 | 启用对应辅助能力时 |
+| `XIANGXIN_API_KEY` | 象信结构化判定（推荐的**判断模型**，省 Token） | 建议配置；未配置时相关门控自动放行 |
 | `OPENCODE_GO_API_KEY` | OpenCode Go 路由 | 使用对应路由时 |
 
 不是把所有 Key 填满才可运行；也不要以为选了免费主模型，辅助判定就自动免费。所选功能的凭据与预算要一起检查。
@@ -79,6 +79,38 @@ npm run panel
 
 第三方 `our-free-model` 的清单与降级链由插件维护，面板读取插件可用信息；不要手抄过期的免费模型列表。安装与条款见[免费模型指南](<free-models.md>)。
 
+### 判断模型与辅助模型：省 Token 的关键
+
+群消息不必每条都送主模型。**判断模型（system-1）** 先做高频小判断，主模型只处理真正值得回的消息：
+
+- **象信（推荐）**：`XIANGXIN_API_KEY`。回复门控、记忆门控、事件/主语判断、表情气氛、主动接话钩子都走它，一次请求返回多个是非或评分，最省。未配置时相应门控自动放行，宁可多说，但主模型会读到更多消息。
+- **Jev 等免费模型**：Our Free Model 的 `jev-1.13-free` 可承担辅助生成（日报、人物卡、事件摘要）或作为主聊天模型。用 `QQBOT_DIARY_PROVIDER` / `QQBOT_EVENT_PROVIDER` / `QQBOT_CARD_PROVIDER` / `QQBOT_DIGEST_PROVIDER` 及其 `*_MODEL` 指向可用路由；不配置时这些辅助生成默认走 `opencode-go`。
+- 两者角色不同：**门控/分类用象信，便宜的文本生成用免费模型**。判断模型也会产生调用费用或受额度限制，不能承诺永久免费。
+
+若不确定当前用了什么，先看启动日志中的注册提示与面板实际模型，不要只凭填了哪个 Key 推断。
+
+## 生图：独立设置，默认关闭
+
+凭据页下方的“OpenAI 生图”表单只保存设置，不调用付费 API。设置位于所选 profile 根目录的 `qqbot-image-generation.json`；已有 profile 用初始化补缺失模板，不覆盖原值。完整说明见[生图指南](<image-generation.md>)，示例见[默认模板](<../examples/profile/qqbot-image-generation.json>)。
+
+| 字段 | 默认值 | 严格允许值 / 范围 |
+| --- | --- | --- |
+| `enabled` | `false` | 布尔值；需主动勾选和确认费用，不因保存 Key 自动启用 |
+| `model` | `gpt-image-2` | `gpt-image-2` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` / `gpt-image-1.5` / `gpt-image-1-mini` |
+| `size` | `1024x1024` | `1024x1024` / `1536x1024` / `1024x1536`；工具保守限制，非 API 最大能力声明 |
+| `quality` | `low` | `low` / `medium` / `high` |
+| `cooldownSeconds` | `120` | 每会话冷却，整数 `60..3600` 秒 |
+| `maxPerHour` | `3` | 每会话每小时尝试上限，整数 `1..10` |
+| `timeoutSeconds` | `180` | API 请求及响应体读取，整数 `30..300` 秒 |
+
+只接受完整七字段对象，拒绝未知字段、任意 URL 和字符串数字。`gpt-image-1` 已下线，不支持它或 DALL·E。文件限 16 KiB，原子 `0600` 写入；目录祖先或目标符号链接、目标硬链接会被拒绝。
+
+- 复用启动环境中的 `OPENAI_API_KEY`，固定官方 `POST /v1/images/generations`，不经自定义聊天网关；DeepSeek/免费聊天路由也可使用这项独立付费能力。
+- 生图设置下一次调用动态读取；**新 Key 仍需重启**。空白 Key 不自动启用或调用生图。
+- `QQBOT_IMAGE_GENERATION=off` 可额外禁止；`on` 不能越过 JSON 的关闭状态。环境变量改变需要由实际机器人进程继承。
+- 仅当前真实 QQ group/C2C 消息的明确画图请求可授权。群聊推荐 `@机器人 /生图 一只看星星的鲸鱼`；自然语句保守识别，不能当作完整 NLP 授权保证。
+- 每次单张、只发本次新 prompt、不附历史/参考图、不自动重试。单进程每小时硬上限 10 次、最多一张在途；失败/取消/不确定 API 尝试也计数，重启清零，不是金额预算。
+
 ## 人格、说话人模块与低打扰
 
 - **人格设定**：为默认或某个群组织人格模块。未单独设置的群继承默认配置，保存前确认当前编辑的是默认项还是具体群。
@@ -104,6 +136,7 @@ npm run panel
 | `QQBOT_DIARY_PUBLISH` | 非 `on` 不发布 | 即便本地日记开启，对外发布还要显式 `on` |
 | `QQBOT_DIARY_GUILD` / `QQBOT_DIARY_CHANNEL` | 无目标，不发布 | 需主动配置获授权的频道/子频道 ID |
 | `QQBOT_VECTOR` | `off` | 本地向量模型及索引需另行验证 |
+| `QQBOT_IMAGE_GENERATION` | `off` 额外禁止；`on` 不会越过 JSON 关闭状态 | 生图仍需独立 `enabled:true`、可用 Key 与当前明确请求；不是金额预算 |
 | `QQBOT_MEMORY_DB` | 补丁通常回退到 `~/.dsh/memory/ltm.db` | 设置后还要确认上游 LTM 使用同一文件，不是单独改此变量就完成隔离 |
 | `QQBOT_MODEL_FAILOVER` | 默认关闭，仅 `on` 启用 | 跨服务商兜底会转发该轮上下文，可能收费 |
 | `QQBOT_FALLBACK_PROVIDER` / `QQBOT_FALLBACK_MODEL` | 开启兜底前应显式核对 | 配好对应路由和 Key，不假设免费 |

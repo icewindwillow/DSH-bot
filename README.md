@@ -15,6 +15,8 @@ DSH-bot 是基于 **DeepSeek Harness（DSH）与上游 `@tencent-connect/dsh-qqb
 | 对话不总像第一次见面 | 关系状态、心情和事件线索参与回应；这些是可检查的程序状态，不是机器人真的有情感 |
 | 能接梗，也能安静待着 | 唤醒词、对话窗口、按群唤醒指数和静默回应共同控制打扰程度 |
 | 群友发过的图，不必反复翻聊天记录 | 媒体归档、搜图、收藏和发回当前会话；启用前请先获得成员理解与同意 |
+| 明确说“画一张”，才使用付费生图 | 可选 OpenAI 单张生图与 QQ 回传；默认关闭，只发本次新 prompt，不附群历史，不自动重试 |
+| 每条消息都送主模型，很贵 | 先用便宜的**判断模型**做门控与分类，主模型只处理真正值得回的消息，大幅节省 Token |
 | 配置不想手改一大堆 JSON | 本机网页管理 API Key、模型、人格、成员模块、唤醒指数与图库 |
 | 切模型，联网行为也跟着切 | 搜索/读取按实际请求路由选择后端；读不到就明确说读不到，不把搜索摘要伪装成文章原文 |
 
@@ -26,13 +28,23 @@ DSH-bot 是基于 **DeepSeek Harness（DSH）与上游 `@tencent-connect/dsh-qqb
 
 运行 `npm run panel`，打开终端打印的 **http://127.0.0.1:7791**，在凭据区域配置：
 
-- OpenAI / DeepSeek / 象信 API Key；
+- **象信 API Key（判断模型，强烈建议先配）**；
+- OpenAI / DeepSeek 聊天 API Key；
 - QQ 机器人的 `QQBOT_APPID`、`QQBOT_SECRET`；
-- 可选的 `OPENCODE_GO_API_KEY`。
+- 可选的 `OPENCODE_GO_API_KEY`（部分辅助功能的后备路由）。
 
 **不需要为了填 Key 先学 YAML。** 面板不回显已保存的密码；留空表示保留，删除要显式操作，保存后需重启机器人。继承的非空环境变量优先于面板值。
 
 > 密钥存放在所选 profile 的 `.bot-secrets.json`，使用 `0600` 权限，**是本地明文，不是加密保险箱**。同一操作系统账号、备份软件及具有相应权限的进程仍可能读取。通过 `npm run bot` 启动，才会由本项目启动器加载它。详见[配置指南](<docs/configuration.md>)。
+
+## 为什么建议配一个「判断模型」？
+
+群聊里大部分消息并不需要主模型逐条读完：要不要回、值不值得记、是不是在骂人，都是高频的小判断。本项目先交给一个便宜的**判断模型（system-1）**，只把真正值得处理的消息送进主模型，**Token 消耗会明显下降**。
+
+- **象信（推荐）**：结构化判断，一次请求返回多个是非/评分，最省。在面板填 `XIANGXIN_API_KEY` 即可；内置的回复门控、记忆门控、事件与主语判断都走它。
+- **Jev 这类免费模型**：Our Free Model 提供 `jev-1.13-free` 等免费聊天模型，适合承担便宜的辅助生成（日报、人物卡、事件摘要），也可以直接当主聊天模型。把对应的 `QQBOT_*_PROVIDER` / `QQBOT_*_MODEL` 指向可用路由即可。
+
+不配判断模型也能跑：判断失败时门控会自动放行（宁可多说），但每条消息都更容易送进主模型，**更贵也更吵**。判断模型本身也可能按次计费或受额度限制，详见[配置指南](<docs/configuration.md>)。
 
 ## 免费模型，也能纳入同一套选择器
 
@@ -43,6 +55,12 @@ DSH-bot 是基于 **DeepSeek Harness（DSH）与上游 `@tencent-connect/dsh-qqb
 本项目的跨服务商兜底**默认关闭**，不会在免费渠道故障后默认改送付费后端。只有管理员显式 `QQBOT_MODEL_FAILOVER=on` 并审阅后备模型、路由 Key、上下文外发及费用后才启用；Our Free Model 自己的 combo 另由该插件管理。
 
 官方 README 明确警告：**不要安装 npm 上同名的非官方包**。我们核对了官方 [v2.7.3 Release](https://github.com/Ebony-Vinyl/dsh-our-free-model/releases/tag/v2.7.3) 的发布制品，按[免费模型接入指南](<docs/free-models.md>)安装，而不是猜一条 `npm install`。
+
+## 也能画图，但由你明确开启
+
+可选工具 `generate_image` 使用自己的 OpenAI 图片 Key，生成单张 PNG 并回传当前 QQ 群聊或 C2C。**默认关闭、可能收费，不自动重试**；与聊天 provider 独立，可以 DeepSeek / 免费模型聊天、OpenAI 生图。只发送本次新 prompt，不自动附带群历史或参考图。
+
+在“API 密钥 / QQ 连接”页下方配置；填 Key 不会自动启用。建议在群里明确发送 `@机器人 /生图 一只看星星的鲸鱼`。当前范围为 QQ 官方插件 0.5.2 的 group/C2C，不宣称支持频道或 dm。次数限制不是金额预算，真实 QQ/API 仍需管理员授权验收。详见[生图指南与边界](<docs/image-generation.md>)。
 
 ## 先跑起来
 
@@ -124,11 +142,11 @@ npm run bot
 - 模型调用、搜索与辅助判定可能产生费用；选免费聊天模型不代表整套增强零费用。
 - 补丁采用全量预检、原件备份、逐文件提交和失败回滚；**不是跨文件单一原子事务，也不保证断电时自动恢复**。
 - 不附带生产群资料、聊天历史、密钥、日志或图片；示例与测试只能使用虚构数据。
-- **OpenAI 生图尚未接入。** 看图、图库和发图不等于生图。
+- **OpenAI 生图为独立可选能力，默认关闭。** 看图、图库和已有图发送不等于生图；生图需明确请求、独立费用与权限，见[专用指南](<docs/image-generation.md>)。
 
 ## 文档导航
 
-[架构与能力边界](<docs/architecture.md>) · [配置](<docs/configuration.md>) · [部署](<docs/deployment.md>) · [免费模型](<docs/free-models.md>) · [隐私](<docs/privacy.md>) · [开发](<docs/development.md>) · [故障排查](<docs/troubleshooting.md>)
+[架构与能力边界](<docs/architecture.md>) · [配置](<docs/configuration.md>) · [部署](<docs/deployment.md>) · [免费模型](<docs/free-models.md>) · [生图](<docs/image-generation.md>) · [隐私](<docs/privacy.md>) · [开发](<docs/development.md>) · [故障排查](<docs/troubleshooting.md>)
 
 [Git 协作流程](<docs/git-workflow.md>) · [参与贡献](<CONTRIBUTING.md>) · [安全报告](<SECURITY.md>) · [第三方说明](<THIRD_PARTY_NOTICES.md>)
 
@@ -137,7 +155,7 @@ npm run bot
 - 保持 Node 24/25 CI 矩阵持续通过，补齐更多环境的实机验证；
 - 持续减少对上游安装产物锚点的依赖，完善补丁升级检查；
 - 改进权限、隐私选择和新手引导；
-- 探索 OpenAI 生图工具及 QQ 图片回传，明确权限、预算与计费后再接入。
+- 完善生图授权和费用提示，补齐管理员授权下的真实 QQ 图片回传验收。
 
 ## 授权与致谢
 

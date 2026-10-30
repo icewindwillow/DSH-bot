@@ -8,6 +8,7 @@ import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, stat
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { IMAGE_GENERATION_DEFAULTS } from '../bot-config-panel/image-generation.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SERVER = join(ROOT, 'bot-config-panel', 'server.mjs');
@@ -249,6 +250,89 @@ test('real panel HTTP: DSH_HOME/profile name and spaced Chinese paths; overlay w
     assert.equal(reread.json.model.provider, 'our-free-model');
     assert.equal(reread.json.model.model, 'combo:synthetic-free');
     assert.equal(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8'), basePatch);
+  });
+});
+
+test('real panel HTTP: image settings default off, credential saves do not enable, strict save dynamically rereads', { timeout: 20000 }, async () => {
+  await withPanel({ defaultProfile: true }, async ({ port, cookie, profile }) => {
+    const imageFile = join(profile, 'qqbot-image-generation.json');
+    const before = await request(port, '/api/image-generation', { cookie });
+    assert.equal(before.status, 200);
+    assert.equal(before.headers['cache-control'], 'no-store');
+    assert.deepEqual(before.json, { ok: true, settings: IMAGE_GENERATION_DEFAULTS });
+    assert.equal(existsSync(imageFile), false, 'GET must not seed configuration');
+    const blank = await request(port, '/api/credentials', { cookie, method: 'PUT', body: { values: { OPENAI_API_KEY: '' } } });
+    assert.equal(blank.status, 200);
+    assert.equal((await request(port, '/api/image-generation', { cookie })).json.settings.enabled, false);
+    assert.equal(existsSync(imageFile), false, 'blank Key may not auto-enable or create image settings');
+    const localKey = 'synthetic-image-test-local-key';
+    const key = await request(port, '/api/credentials', { cookie, method: 'PUT', body: { values: { OPENAI_API_KEY: localKey } } });
+    assert.equal(key.status, 200);
+    assertStatusOnly(key, [localKey]);
+    assert.equal((await request(port, '/api/image-generation', { cookie })).json.settings.enabled, false, 'saving a nonblank Key also may not opt into paid generation');
+    for (const model of ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini']) {
+      const settings = { ...IMAGE_GENERATION_DEFAULTS, enabled: true, model, size: '1024x1536', quality: 'high', cooldownSeconds: 60, maxPerHour: 1, timeoutSeconds: 30 };
+      const saved = await request(port, '/api/image-generation', { cookie, method: 'PUT', body: settings });
+      assert.equal(saved.status, 200, saved.text);
+      assert.deepEqual(saved.json, { ok: true, settings, restartRequired: false });
+      assert.equal(saved.text.includes(localKey), false);
+      assert.equal(statSync(imageFile).mode & 0o777, 0o600);
+      assert.deepEqual(JSON.parse(readFileSync(imageFile, 'utf8')), settings);
+      assert.deepEqual((await request(port, '/api/image-generation', { cookie })).json.settings, settings);
+    }
+    // Prove reads are dynamic and do not require restarting the panel.
+    writeFileSync(imageFile, JSON.stringify(IMAGE_GENERATION_DEFAULTS));
+    assert.deepEqual((await request(port, '/api/image-generation', { cookie })).json.settings, IMAGE_GENERATION_DEFAULTS);
+    assert.deepEqual(readdirSync(profile).filter((name) => name.includes('image-generation')), ['qqbot-image-generation.json']);
+  });
+});
+
+test('real panel HTTP: image API fences, invalid/oversized payloads and corrupt files never leak input', { timeout: 20000 }, async () => {
+  await withPanel({}, async ({ port, cookie, profile }) => {
+    const file = join(profile, 'qqbot-image-generation.json');
+    const cases = [
+      { cookie: undefined, expected: 401 }, { cookie: 'dsh_bot_session=wrong', expected: 401 },
+      { cookie, headers: { origin: 'https://attacker.invalid' }, expected: 403 },
+      { cookie, headers: { origin: `http://127.0.0.1:${port + 1}` }, expected: 403 },
+      { cookie, headers: { 'sec-fetch-site': 'cross-site' }, expected: 403 },
+      { cookie, headers: { 'sec-fetch-site': 'same-site' }, expected: 403 },
+      { cookie, headers: { host: `localhost:${port}` }, expected: 403 },
+      { cookie, headers: { host: `attacker.invalid:${port}` }, expected: 403 },
+    ];
+    for (const item of cases) {
+      for (const method of ['GET', 'PUT']) {
+        const response = await request(port, '/api/image-generation', { ...item, method, ...(method === 'PUT' ? { body: { ...IMAGE_GENERATION_DEFAULTS, enabled: true } } : {}) });
+        assert.equal(response.status, item.expected);
+      }
+    }
+    assert.equal(existsSync(file), false);
+    const marker = 'synthetic-image-sensitive-file-content';
+    const invalid = [
+      {}, null, [], { settings: IMAGE_GENERATION_DEFAULTS }, { ...IMAGE_GENERATION_DEFAULTS, enabled: 'true' },
+      { ...IMAGE_GENERATION_DEFAULTS, cooldownSeconds: 59 }, { ...IMAGE_GENERATION_DEFAULTS, maxPerHour: 11 },
+      { ...IMAGE_GENERATION_DEFAULTS, timeoutSeconds: 301 }, { ...IMAGE_GENERATION_DEFAULTS, quality: 'auto' },
+      { ...IMAGE_GENERATION_DEFAULTS, model: 'gpt-image-1' }, { ...IMAGE_GENERATION_DEFAULTS, model: 'dall-e-3' },
+      { ...IMAGE_GENERATION_DEFAULTS, baseURL: `https://${marker}.invalid` },
+      { ...IMAGE_GENERATION_DEFAULTS, prompt: marker }, { ...IMAGE_GENERATION_DEFAULTS, n: 2 },
+      `{\"model\":\"${marker}\"`, { ...IMAGE_GENERATION_DEFAULTS, model: marker.repeat(40000) },
+    ];
+    for (const body of invalid) {
+      const response = await request(port, '/api/image-generation', { cookie, method: 'PUT', body });
+      assert.equal(response.status, 400);
+      assert.equal(response.json.ok, false);
+      assert.equal(response.text.includes(marker), false);
+      assert.equal(existsSync(file), false);
+    }
+    writeFileSync(file, `{\"${marker}\":`);
+    const corrupted = await request(port, '/api/image-generation', { cookie });
+    assert.equal(corrupted.status, 500);
+    assert.equal(corrupted.text.includes(marker), false);
+    assert.equal(readFileSync(file, 'utf8'), `{\"${marker}\":`, 'GET must not repair or overwrite corrupt settings');
+    writeFileSync(file, 'x'.repeat(16 * 1024 + 1));
+    const oversized = await request(port, '/api/image-generation', { cookie });
+    assert.equal(oversized.status, 500);
+    assert.equal(oversized.json.ok, false);
+    assert.equal((await request(port, '/api/credentials', { cookie })).status, 200, 'panel remains healthy');
   });
 });
 

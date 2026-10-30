@@ -20,6 +20,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { credentialStatus, updateCredentials } from './credentials.mjs';
+import { readImageGenerationSettings, writeImageGenerationSettings } from './image-generation.mjs';
 import {
   readFileSync, writeFileSync, copyFileSync, existsSync, statSync,
   openSync, closeSync, renameSync, readdirSync, chmodSync, unlinkSync,
@@ -922,6 +923,17 @@ const server = createServer((req, res) => {
   if (req.method === 'PUT' && url.pathname === '/api/credentials') {
     readBody().then(body => send(200, { ok: true, ...updateCredentials(PROFILE_DIR, body), restartRequired: true }))
       .catch(() => send(400, { ok: false, error: '密钥未保存：请检查输入字段、本地文件格式和权限。不会显示密钥内容。' }));
+    return;
+  }
+
+  // Settings only: these endpoints never contact OpenAI or start a generation.
+  if (req.method === 'GET' && url.pathname === '/api/image-generation') {
+    try { return send(200, { ok: true, settings: readImageGenerationSettings(PROFILE_DIR) }); }
+    catch { return send(500, { ok: false, error: '无法读取生图配置，请检查本地文件格式和权限。不会显示文件内容。' }); }
+  }
+  if (req.method === 'PUT' && url.pathname === '/api/image-generation') {
+    readBody().then(body => send(200, { ok: true, settings: writeImageGenerationSettings(PROFILE_DIR, body), restartRequired: false }))
+      .catch(() => send(400, { ok: false, error: '生图设置未保存：请检查完整字段、枚举值、数值范围及本地文件权限。不会显示文件内容。' }));
     return;
   }
 

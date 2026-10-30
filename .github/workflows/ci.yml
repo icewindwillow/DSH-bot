@@ -27,5 +27,7 @@ jobs:
         run: |
           node --check patch-qqbot.mjs
           node --check bot-config-panel/server.mjs
+          node --check bot-config-panel/image-generation.mjs
+          node --check qqbot-patches/image-generation-helper.js
           node --check scripts/start-bot.mjs
           node --check scripts/init-profile.mjs
