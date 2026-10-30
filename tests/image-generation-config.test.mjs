@@ -18,10 +18,11 @@ const DEFAULTS = {
   enabled: false, model: 'gpt-image-2', size: '1024x1024', quality: 'low',
   cooldownSeconds: 120, maxPerHour: 3, timeoutSeconds: 180,
 };
-const MODELS = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors'];
+const MODELS = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors', '@cf/black-forest-labs/flux-1-schnell'];
 const SIZES_BY_MODEL = (model) => model === 'Kwai-Kolors/Kolors'
   ? ['1024x1024', '960x1280', '768x1024']
-  : ['1024x1024', '1536x1024', '1024x1536'];
+  : model === '@cf/black-forest-labs/flux-1-schnell' ? ['1024x1024']
+    : ['1024x1024', '1536x1024', '1024x1536'];
 const settings = (overrides = {}) => ({ ...DEFAULTS, ...overrides });
 function fixture(t) {
   const prefix = join(realpathSync(tmpdir()), 'dsh-image-settings-');
@@ -238,5 +239,5 @@ test('image settings UI isolated block loads/saves settings only, validates limi
   for (const el of controls.values()) assert.equal(el.textContent.includes('synthetic-sensitive'), false);
   assert.ok(calls.every(({ path }) => path === '/api/image-generation'));
   for (const model of MODELS) assert.ok(html.includes(`<option value="${model}">`));
-  for (const warning of ['OpenAI 按官方规则计费', 'Kwai-Kolors/Kolors', 'SILICONFLOW_API_KEY', '本轮新 prompt', '不附带群历史', '不自动重试', '每次单张', '新填或更换 Key 仍需重启', '不经过自定义聊天网关']) assert.ok(html.includes(warning), warning);
+  for (const warning of ['OpenAI 按官方规则计费', 'Kwai-Kolors/Kolors', 'SILICONFLOW_API_KEY', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'flux-1-schnell', 'image-gen', '本轮新 prompt', '不附带群历史', '不自动重试', '每次单张', '新填或更换 Key 需要重启机器人', '不经过自定义聊天网关']) assert.ok(html.includes(warning), warning);
 });

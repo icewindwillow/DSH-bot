@@ -12,7 +12,7 @@ import { IMAGE_GENERATION_DEFAULTS } from '../bot-config-panel/image-generation.
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SERVER = join(ROOT, 'bot-config-panel', 'server.mjs');
-const KEYS = ['OPENAI_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY', 'QQBOT_APPID', 'QQBOT_SECRET'];
+const KEYS = ['OPENAI_API_KEY', 'SILICONFLOW_API_KEY', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY', 'QQBOT_APPID', 'QQBOT_SECRET'];
 const basePatch = '- id: agent-default-model\n  config:\n    provider: legacy-only\n    model: synthetic-legacy\n';
 const overlay = `# Synthetic test data, no real credentials.
 - id: llm-pi-ai

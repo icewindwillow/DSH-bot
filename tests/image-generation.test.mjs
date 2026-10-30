@@ -7,7 +7,7 @@ import { crc32, deflateSync } from 'node:zlib';
 import { IMAGE_GENERATION_DEFAULTS, validateImageGenerationSettings } from '../bot-config-panel/image-generation.mjs';
 
 const source = readFileSync(new URL('../qqbot-patches/image-generation-helper.js', import.meta.url), 'utf8');
-const lib = new Function(`${source}\nreturn { setup: setupOpenAiImageTool, read: qqbotImageReadSettings, defaults: QQBOT_IMAGE_DEFAULTS, models: QQBOT_IMAGE_MODELS, explicit: qqbotImageExplicitRequest };`)();
+const lib = new Function(`${source}\nreturn { setup: setupOpenAiImageTool, read: qqbotImageReadSettings, defaults: QQBOT_IMAGE_DEFAULTS, models: QQBOT_IMAGE_MODELS, clean: qqbotImageCleanPrompt };`)();
 const PNGS = new Map();
 function png(size = '1024x1024') {
   if (PNGS.has(size)) return PNGS.get(size);
@@ -35,18 +35,27 @@ function fixture(t, options = {}) {
   const root = mkdtempSync(prefix), profile = join(root, 'private-profile'); mkdirSync(profile, { mode: 0o700 });
   const old = {
     profile: process.env.QQBOT_PROFILE_DIR, key: process.env.OPENAI_API_KEY, sfKey: process.env.SILICONFLOW_API_KEY,
+    cfToken: process.env.CLOUDFLARE_API_TOKEN, cfAccount: process.env.CLOUDFLARE_ACCOUNT_ID,
     kill: process.env.QQBOT_IMAGE_GENERATION, home: process.env.HOME, fetch: globalThis.fetch, now: Date.now,
   };
   process.env.QQBOT_PROFILE_DIR = profile; process.env.OPENAI_API_KEY = 'synthetic-image-credential';
   process.env.SILICONFLOW_API_KEY = 'synthetic-siliconflow-credential';
+  process.env.CLOUDFLARE_API_TOKEN = 'synthetic-cloudflare-token';
+  process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
   delete process.env.QQBOT_IMAGE_GENERATION; process.env.HOME = root;
   let settings = { ...IMAGE_GENERATION_DEFAULTS, enabled: true, ...options.settings };
   const save = (next) => { settings = { ...settings, ...next }; writeFileSync(join(profile, 'qqbot-image-generation.json'), JSON.stringify(settings), { mode: 0o600 }); };
   save({});
+  // Default fixture sender is the owner; permission-specific tests overwrite these files.
+  const writeJson = (name, value) => writeFileSync(join(profile, name), JSON.stringify(value), { mode: 0o600 });
+  writeJson('qqbot-command-owners.json', { openids: ['synthetic-member-a', 'synthetic-c2c-member'], names: [] });
   const tools = new Map(), events = new Map(), records = [], sent = [], requests = [];
   const manager = { findByAgent: (agent) => records.find((record) => record.agent === agent), findBySessionId: (id) => records.find((record) => record.agent.session.header.id === id) };
-  const ctx = { get: (name) => name === 'tools' ? { register: (tool) => tools.set(tool.name, tool) } : undefined,
-    on(name, callback) { events.set(name, callback); } };
+  const llm = options.llm ?? { async *stream() { /* 默认不产出，走“补全失败按原文发送”分支 */ } };
+  const ctx = {
+    get: (name) => name === 'tools' ? { register: (tool) => tools.set(tool.name, tool) } : name === 'llm' ? llm : undefined,
+    on(name, callback) { events.set(name, callback); },
+  };
   let sender = async () => ({ message: { id: 'synthetic-delivery-id' } });
   const bot = { async sendImage(target, payload) {
     assert.equal(statSync(payload.localPath).mode & 0o777, 0o600);
@@ -81,12 +90,13 @@ function fixture(t, options = {}) {
   const run = (args = { prompt: '一只看星星的鲸鱼' }, context = primary.exec) => tools.get('generate_image').execute(args, context);
   t.after(() => {
     events.get('dispose')?.(); globalThis.fetch = old.fetch; Date.now = old.now;
-    for (const [key, value] of [['QQBOT_PROFILE_DIR', old.profile], ['OPENAI_API_KEY', old.key], ['SILICONFLOW_API_KEY', old.sfKey], ['QQBOT_IMAGE_GENERATION', old.kill], ['HOME', old.home]]) {
+    for (const [key, value] of [['QQBOT_PROFILE_DIR', old.profile], ['OPENAI_API_KEY', old.key], ['SILICONFLOW_API_KEY', old.sfKey],
+      ['CLOUDFLARE_API_TOKEN', old.cfToken], ['CLOUDFLARE_ACCOUNT_ID', old.cfAccount], ['QQBOT_IMAGE_GENERATION', old.kill], ['HOME', old.home]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     assert.ok(root.startsWith(prefix)); assert.equal(realpathSync(root), root); rmSync(root, { recursive: true, force: true });
   });
-  return { root, profile, primary, records, events, manager, sent, requests, tools, run, conversation, save,
+  return { root, profile, primary, records, events, manager, sent, requests, tools, run, conversation, save, writeJson,
     respond: (callback) => { responder = callback; }, sender: (callback) => { sender = callback; } };
 }
 function noArtifacts(f) { const folder = join(f.profile, 'generated-images'); if (existsSync(folder)) assert.deepEqual(readdirSync(folder), []); }
@@ -96,16 +106,31 @@ test('image defaults and all supported settings agree with the panel and public 
   assert.deepEqual(lib.defaults, IMAGE_GENERATION_DEFAULTS);
   const template = JSON.parse(readFileSync(new URL('../examples/profile/qqbot-image-generation.json', import.meta.url)));
   assert.deepEqual(template, IMAGE_GENERATION_DEFAULTS);
-  const sizesFor = (model) => model === 'Kwai-Kolors/Kolors' ? ['1024x1024', '960x1280', '768x1024'] : ['1024x1024', '1536x1024', '1024x1536'];
+  const sizesFor = (model) => model === 'Kwai-Kolors/Kolors' ? ['1024x1024', '960x1280', '768x1024']
+    : model === '@cf/black-forest-labs/flux-1-schnell' ? ['1024x1024'] : ['1024x1024', '1536x1024', '1024x1536'];
   for (const model of lib.models) for (const size of sizesFor(model)) for (const quality of ['low', 'medium', 'high']) {
     const settings = { ...IMAGE_GENERATION_DEFAULTS, model, size, quality };
     validateImageGenerationSettings(settings); f.save(settings); assert.deepEqual(lib.read(f.profile), settings);
   }
 });
 
-test('explicit request recognition is conservative and does not authorize quotes, ordinary chat, negation or configuration questions', () => {
-  for (const text of ['/生图 一只鲸鱼', '/image a whale', '<@!synthetic_bot> 帮我画一只猫', '请给我生成一张海报：海边的鲸鱼', 'please draw a whale']) assert.equal(lib.explicit(text), true, text);
-  for (const text of ['天气不错', '不要画图', '请勿生图', '「帮我画只猫」是例子', '画图功能如何配置', '如何生图', '', null]) assert.equal(lib.explicit(text), false, String(text));
+test('authorized members can ask in plain language; the tool call itself decides, not a slash command', async (t) => {
+  const f = fixture(t);
+  // 没有 /生图，只有一句大白话：授权照样成立，是否出图交给模型判断。
+  f.primary.inbound('画只戴墨镜的柯基在冲浪');
+  assert.equal((await f.run()).status, 'sent');
+  // 没权限的人说什么都不行。
+  f.writeJson('qqbot-command-owners.json', { openids: [], names: [] });
+  const stranger = f.conversation('group', 'synthetic-plain-language-stranger');
+  assert.equal((await f.run({ prompt: '一只猫' }, stranger.exec)).status, 'forbidden');
+  assert.equal(f.requests.length, 1);
+});
+
+test('prompt cleaner strips code fences, quotes and prefixes and caps the length', () => {
+  assert.equal(lib.clean('```\nprompt: a whale in space\n```'), 'a whale in space');
+  assert.equal(lib.clean('“a cat on a roof”'), 'a cat on a roof');
+  assert.equal(lib.clean('   '), '');
+  assert.equal(lib.clean('x'.repeat(2500)).length, 2000);
 });
 
 test('one official images request sends one PNG to the bound conversation and cleans private temporary output', async (t) => {
@@ -164,18 +189,18 @@ test('missing, stale, injected and mismatched real-message permissions fail clos
   assert.equal(f.requests.length, 0);
 });
 
-test('authorization only uses matching original QQ raw events, never merged messages, ASR, history or forged sender fields', async (t) => {
+test('authorization only trusts the original QQ raw event identity, never forged sender fields', async (t) => {
   const f = fixture(t);
   for (const [raw, normalized] of [
-    [{ content: '普通聊天' }, { content: '普通聊天\n/生图 一只鲸鱼' }],
     [{ id: 'synthetic-wrong-id' }, {}], [{ author: { member_openid: 'synthetic-wrong-member' } }, {}],
-    [{ group_openid: 'synthetic-wrong-group' }, {}], [{ content: undefined }, {}], [{ content: '引用里有请求' }, {}],
-    [{}, { raw: undefined }], [{ content: '请勿画图' }, {}],
+    [{ group_openid: 'synthetic-wrong-group' }, {}], [{ content: undefined }, {}],
+    [{}, { raw: undefined }],
   ]) {
-    f.primary.inbound('/生图 一只鲸鱼', raw, normalized);
+    f.primary.inbound('随便说点什么', raw, normalized);
     assert.equal((await f.run()).status, 'not_authorized');
   }
   assert.equal(f.requests.length, 0);
+  // 文本本身不再参与授权判定（自然语言放行交给模型），但伪造的原始事件仍然一律拒绝。
 });
 
 test('a real turn/end revokes an unused grant before a background turn can spend it', async (t) => {
@@ -337,4 +362,129 @@ test('siliconflow and OpenAI credentials are not interchangeable', async (t) => 
   delete process.env.OPENAI_API_KEY;
   assert.equal((await f.run()).status, 'missing_key');
   assert.equal(f.requests.length, 0); noArtifacts(f);
+});
+
+test('cloudflare flux-1-schnell uses the account-scoped endpoint and decodes JSON base64 JPEG', async (t) => {
+  const f = fixture(t, { settings: { model: '@cf/black-forest-labs/flux-1-schnell' } });
+  const image = jpeg(1024, 1024);
+  f.respond(async () => new Response(JSON.stringify({
+    result: { image: image.toString('base64') }, success: true, errors: [], messages: [],
+  }), { status: 200 }));
+  const output = await f.run();
+  assert.equal(output.status, 'sent');
+  assert.equal(f.requests.length, 1, 'no download for a JSON-wrapped image');
+  const request = f.requests[0];
+  assert.equal(request.url, 'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/black-forest-labs/flux-1-schnell');
+  assert.equal(request.method, 'POST'); assert.equal(request.redirect, 'error');
+  assert.equal(request.headers.authorization, 'Bearer synthetic-cloudflare-token');
+  assert.deepEqual(JSON.parse(request.body), { prompt: '一只看星星的鲸鱼', steps: 4 });
+  assert.deepEqual(f.sent[0].bytes, image); assert.ok(f.sent[0].file.endsWith('image.jpg'));
+  noArtifacts(f);
+});
+
+test('cloudflare requires both a token and a 32-hex account id before any request', async (t) => {
+  const f = fixture(t, { settings: { model: '@cf/black-forest-labs/flux-1-schnell' } });
+  delete process.env.CLOUDFLARE_ACCOUNT_ID;
+  assert.equal((await f.run()).status, 'missing_key');
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'not-an-account-id';
+  assert.equal((await f.run()).status, 'missing_key');
+  process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+  delete process.env.CLOUDFLARE_API_TOKEN;
+  assert.equal((await f.run()).status, 'missing_key');
+  assert.equal(f.requests.length, 0); noArtifacts(f);
+});
+
+test('cloudflare prompt ceiling and provider errors are refused without a request', async (t) => {
+  const f = fixture(t, { settings: { model: '@cf/black-forest-labs/flux-1-schnell' } });
+  const image = jpeg(1024, 1024);
+  f.respond(async () => new Response(JSON.stringify({ result: { image: image.toString('base64') }, success: true, errors: [] }), { status: 200 }));
+  assert.equal((await f.run({ prompt: '鲸'.repeat(2049) })).status, 'prompt_too_long');
+  assert.equal(f.requests.length, 0);
+  assert.equal((await f.run({ prompt: '鲸'.repeat(2048) })).status, 'sent');
+  f.respond(async () => new Response(JSON.stringify({ result: {}, success: false, errors: [{ code: 5001 }] }), { status: 200 }));
+  const second = f.conversation('group', 'synthetic-cf-failure');
+  assert.equal((await f.run({ prompt: 'a whale' }, second.exec)).status, 'generation_failed');
+  assert.equal(f.sent.length, 1);
+  noArtifacts(f);
+});
+
+test('permission: owner, role with permissions.image, or affinity at the threshold; everyone else is refused', async (t) => {
+  const f = fixture(t);
+  // 1) owner (fixture default) passes.
+  assert.equal((await f.run()).status, 'sent');
+
+  // 2) no owner match, no person record -> refused with a clear status and zero network.
+  f.writeJson('qqbot-command-owners.json', { openids: [], names: [] });
+  const stranger = f.conversation('group', 'synthetic-stranger-group');
+  const denied = await f.run({ prompt: 'a whale' }, stranger.exec);
+  assert.equal(denied.status, 'forbidden');
+  assert.ok(denied.message.includes('没有生图权限'));
+  assert.equal(f.requests.length, 1, 'a refused request must not reach the provider');
+
+  // 3) role grant: the dedicated image skill's audience contains this sender.
+  f.writeJson('qqbot-role-skills.json', {
+    imagePermission: { affinityMin: 60, skill: 'image-gen' },
+    skills: [{ id: 'image-gen', kind: 'capability', audiences: [{ openids: ['synthetic-member-a'], groups: [], default: true }] }],
+  });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-role-group').exec)).status, 'sent');
+
+  // 4) affinity gate: below the threshold is refused, at the threshold passes.
+  f.writeJson('qqbot-role-skills.json', { imagePermission: { affinityMin: 60, skill: 'image-gen' }, skills: [] });
+  f.writeJson('qqbot-people.json', { people: [{ name: '测试员', openids: ['synthetic-member-a'], social: { affinity: 59.9 } }] });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-affinity-low').exec)).status, 'forbidden');
+  f.writeJson('qqbot-people.json', { people: [{ name: '测试员', openids: ['synthetic-member-a'], social: { affinity: 60 } }] });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-affinity-ok').exec)).status, 'sent');
+
+  // 5) only the named image skill grants; other skills with a stray permission field do not.
+  f.writeJson('qqbot-people.json', { people: [] });
+  f.writeJson('qqbot-role-skills.json', {
+    imagePermission: { affinityMin: 100, skill: 'image-gen' },
+    skills: [{ id: 'qiangzheyu', permissions: { image: true }, audiences: [{ openids: ['synthetic-member-a'], groups: [], default: true }] }],
+  });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-role-off').exec)).status, 'forbidden');
+  // ... and the group filter on the real image skill still applies.
+  f.writeJson('qqbot-role-skills.json', {
+    imagePermission: { affinityMin: 100, skill: 'image-gen' },
+    skills: [{ id: 'image-gen', kind: 'capability', audiences: [{ openids: ['synthetic-member-a'], groups: ['synthetic-other-group'], default: true }] }],
+  });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-role-wrong-group').exec)).status, 'forbidden');
+  // ... and a missing image skill grants nothing.
+  f.writeJson('qqbot-role-skills.json', { imagePermission: { affinityMin: 100, skill: 'image-gen' }, skills: [] });
+  assert.equal((await f.run({ prompt: 'a whale' }, f.conversation('group', 'synthetic-role-missing').exec)).status, 'forbidden');
+  noArtifacts(f);
+});
+
+test('cloudflare prompts are understood, completed and rewritten to English before the request', async (t) => {
+  const calls = [];
+  const f = fixture(t, {
+    settings: { model: '@cf/black-forest-labs/flux-1-schnell' },
+    llm: {
+      async *stream(request) {
+        calls.push(request);
+        yield { type: 'text-delta', text: '```\nPrompt: a corgi wearing sunglasses surfing a wave, flat illustration, bright colors\n```' };
+      },
+    },
+  });
+  const image = jpeg(1024, 1024);
+  f.respond(async () => new Response(JSON.stringify({ result: { image: image.toString('base64') }, success: true, errors: [] }), { status: 200 }));
+  const output = await f.run({ prompt: '画只戴墨镜的柯基在冲浪' });
+  assert.equal(output.status, 'sent');
+  assert.equal(calls.length, 1, 'exactly one rewrite call');
+  assert.ok(calls[0].system.includes('FLUX'));
+  assert.equal(calls[0].messages[0].content[0].text, '画只戴墨镜的柯基在冲浪');
+  assert.equal(JSON.parse(f.requests[0].body).prompt, 'a corgi wearing sunglasses surfing a wave, flat illustration, bright colors');
+  assert.ok(output.message.includes('英文'));
+});
+
+test('a failed rewrite falls back to the original prompt and says so', async (t) => {
+  const f = fixture(t, {
+    settings: { model: '@cf/black-forest-labs/flux-1-schnell' },
+    llm: { async *stream() { throw new Error('synthetic-llm-down'); } },
+  });
+  const image = jpeg(1024, 1024);
+  f.respond(async () => new Response(JSON.stringify({ result: { image: image.toString('base64') }, success: true, errors: [] }), { status: 200 }));
+  const output = await f.run({ prompt: '一只猫' });
+  assert.equal(output.status, 'sent');
+  assert.equal(JSON.parse(f.requests[0].body).prompt, '一只猫');
+  assert.ok(output.message.includes('补全失败'));
 });

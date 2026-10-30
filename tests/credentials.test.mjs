@@ -45,7 +45,7 @@ test('missing profile reports fixed allowlist, reads do not create files', (t) =
   assert.deepEqual(credentialStatus(profile, {}), missing());
   assert.deepEqual(loadCredentialEnvironment(profile, { OTHER: 'synthetic' }), { OTHER: 'synthetic' });
   assert.deepEqual(readdirSync(root), []);
-  assert.deepEqual(CREDENTIAL_KEYS, ['OPENAI_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY', 'QQBOT_APPID', 'QQBOT_SECRET']);
+  assert.deepEqual(CREDENTIAL_KEYS, ['OPENAI_API_KEY', 'SILICONFLOW_API_KEY', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY', 'QQBOT_APPID', 'QQBOT_SECRET']);
 });
 
 test('creates directory 700 and atomic private file 600; status contains no secrets', (t) => {

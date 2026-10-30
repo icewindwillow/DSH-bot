@@ -2,7 +2,7 @@
 
 [返回首页](<../README.md>) · [配置](<configuration.md>) · [隐私](<privacy.md>) · [排错](<troubleshooting.md#生图没有触发或没有收到图片>)
 
-`generate_image` 用管理员选定的图片接口生成一张图片，再通过 QQ 图片接口发回**当前会话**。目前支持 OpenAI 官方接口（付费）和硅基流动 `Kwai-Kolors/Kolors`（当前免费）；它与识图、网络搜图、图库和已有图片发送是不同能力。
+`generate_image` 用管理员选定的图片接口生成一张图片，再通过 QQ 图片接口发回**当前会话**。目前支持 OpenAI 官方接口（付费）、硅基流动 `Kwai-Kolors/Kolors`（当前免费）和 Cloudflare Workers AI `flux-1-schnell`（每日免费额度）；它与识图、网络搜图、图库和已有图片发送是不同能力。
 
 **生图默认关闭。** 聊天模型不必切到 OpenAI：可以用 DeepSeek 或 Our Free Model 聊天，同时单独使用自己的图片 Key。费用取决于所选模型：OpenAI 按官方规则计费，硅基流动 Kolors 当前免费；免费聊天不等于免费生图，免费模型也不保证长期免费。
 
@@ -11,11 +11,11 @@
 ## 先用面板配置
 
 1. 按[部署指南](<deployment.md>)建立独立测试 profile，并完整部署当前补丁。已有 profile 可先 `npm run init` 预览，再 `npm run init -- --apply` 补缺失模板；初始化不覆盖现有设置。
-2. 运行 `npm run panel`，打开终端打印的本机地址，在“API 密钥 / QQ 连接”中保存图片服务的 Key：OpenAI 用 `OPENAI_API_KEY`，硅基流动用 `SILICONFLOW_API_KEY`（需先在硅基流动控制台完成实名认证再创建 Key）。不要在群消息、命令示例或截图中贴 Key。
-3. 在同一页下方找到“生图”，检查模型、尺寸、质量、冷却和次数限制，主动勾选启用并确认费用提示。模型决定服务商与接口：选 `gpt-image-*` 走 OpenAI，选 `Kwai-Kolors/Kolors` 走硅基流动。**填写 Key 不会自动启用生图；空白 Key 也不会自动启用或发起请求。**
+2. 运行 `npm run panel`，打开终端打印的本机地址，在“API 密钥 / QQ 连接”中保存图片服务的 Key：OpenAI 用 `OPENAI_API_KEY`，硅基流动用 `SILICONFLOW_API_KEY`（需先在硅基流动控制台完成实名认证再创建 Key），Cloudflare 用 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`。不要在群消息、命令示例或截图中贴 Key。
+3. 在同一页下方找到“生图”，检查模型、尺寸、质量、冷却和次数限制，主动勾选启用并确认费用提示。模型决定服务商与接口：选 `gpt-image-*` 走 OpenAI，选 `Kwai-Kolors/Kolors` 走硅基流动，选 `@cf/black-forest-labs/flux-1-schnell` 走 Cloudflare。**填写 Key 不会自动启用生图；空白 Key 也不会自动启用或发起请求。**
 4. 新填或更换 Key 后，先停止旧机器人，再在相同 profile 环境中运行 `npm run bot`。启动器把本地凭据加载进进程环境；只改生图设置时无需重启，下一次调用动态读取。
 
-Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/.dsh/.credentials.yaml`。由 launchd 等进程管理器直接启动、不经过 `npm run bot` 的实例，可用 DSH 凭据文件中的 Key；此时面板保存的 `.bot-secrets.json` 不会被该实例加载，需在对应启动环境或 DSH 凭据里配置。
+Key 的读取顺序（按所选模型的凭据名）：进程环境 → DSH 凭据服务 → `~/.dsh/.credentials.yaml`。由 launchd 等进程管理器直接启动、不经过 `npm run bot` 的实例，可用 DSH 凭据文件中的 Key；此时面板保存的 `.bot-secrets.json` 不会被该实例加载，需在对应启动环境或 DSH 凭据里配置。
 5. 在自己获授权的测试群中发送明确请求，自己承担并核对该次真实 API 费用（免费模型也请核对服务商的最新条款）。
 
 推荐写法：
@@ -39,6 +39,16 @@ Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/
 
 这条路径未在本仓库做真实付费/免费调用验收；首次使用请自己确认上游条款、额度和实际效果。
 
+## Cloudflare Workers AI：每天一万 neurons 免费额度
+
+在 Cloudflare 控制台创建 API Token（权限至少 `Workers AI: Read`），并复制账号 ID（32 位十六进制，控制台右侧栏或 Workers 概览页可见）。面板里把模型选为 `@cf/black-forest-labs/flux-1-schnell`：
+
+- 接口是账号作用域的 `POST https://api.cloudflare.com/client/v4/accounts/<账号ID>/ai/run/@cf/black-forest-labs/flux-1-schnell`，账号 ID 只接受 32 位十六进制，格式不对直接拒绝，不发请求。
+- 请求体只有 `prompt` 和 `steps`（固定 4）；**prompt 上限 2048 字**，超长会返回 `prompt_too_long` 且不发起请求、不消耗尝试次数。
+- 模型**固定输出 1024×1024**（模型卡没有宽高参数），所以尺寸只开放方形；返回的是 JSON 里的 base64 **JPEG**，不是下载链接。
+- 免费额度按 neurons 计（每天 10,000），1024×1024 / 4 步大约每张 57.6 neurons，折合每天约 170 张。免费计划超出后请求直接失败，不会自动扣费；付费计划则按量计费。
+- 质量上限明显低于 OpenAI，适合群聊玩梗；中文文字渲染不如 Qwen-Image。
+
 ## 独立配置与精确默认值
 
 设置保存在所选 profile 根目录的 `qqbot-image-generation.json`，不写进聊天模型的 YAML。公开[默认模板](<../examples/profile/qqbot-image-generation.json>)为：
@@ -58,9 +68,9 @@ Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/
 | 字段 | 允许值 / 范围 | 作用 |
 | --- | --- | --- |
 | `enabled` | 严格布尔值，默认 `false` | 必须显式启用；不是字符串 `"true"` |
-| `model` | `gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-1.5`、`gpt-image-1-mini`、`Kwai-Kolors/Kolors` | 白名单，不接受任意模型名；默认 `gpt-image-2`。模型同时决定服务商、接口地址与凭据 |
-| `size` | OpenAI：`1024x1024`、`1536x1024`、`1024x1536`；Kolors：`1024x1024`、`960x1280`、`768x1024` | 默认方形；这是工具的保守限制，不是服务商 API 的最大能力声明 |
-| `quality` | `low`、`medium`、`high` | 默认 `low`；仅对 OpenAI 生效，Kolors 忽略该项 |
+| `model` | `gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-1.5`、`gpt-image-1-mini`、`Kwai-Kolors/Kolors`、`@cf/black-forest-labs/flux-1-schnell` | 白名单，不接受任意模型名；默认 `gpt-image-2`。模型同时决定服务商、接口地址与凭据 |
+| `size` | OpenAI：`1024x1024`、`1536x1024`、`1024x1536`；Kolors：`1024x1024`、`960x1280`、`768x1024`；Cloudflare：`1024x1024` | 默认方形；这是工具的保守限制，不是服务商 API 的最大能力声明 |
+| `quality` | `low`、`medium`、`high` | 默认 `low`；仅对 OpenAI 生效，其余模型忽略该项 |
 | `cooldownSeconds` | 整数 `60..3600` | 每会话两次尝试之间的冷却，默认 `120` 秒 |
 | `maxPerHour` | 整数 `1..10` | 每会话每小时尝试上限，默认 `3` |
 | `timeoutSeconds` | 整数 `30..300` | API 请求及响应体读取超时，默认 `180` 秒 |
@@ -78,6 +88,47 @@ export QQBOT_IMAGE_GENERATION=off
 ```
 
 环境变量需要由实际启动进程继承；更改终端环境后，已运行的旧进程不会自动更新。这个开关可以额外禁止生图，但设置为 `on` **不能越过 JSON 中的 `enabled:false`**。面板里关闭设置会在下一次调用读取时生效，不应把它当作对已提交发送的撤回按钮。
+
+## 谁能生图：主人 / 生图技能 / 好感度
+
+除了“这条消息是明确请求”，发送者还必须满足三种权限之一，否则请求在入站阶段就被拒掉：不产生授权、不计入限流次数、不调用图片接口。
+
+| 放行方式 | 数据来源 | 说明 |
+| --- | --- | --- |
+| 主人 | `qqbot-command-owners.json` 的 `openids` / `names` | 和 `/new`、`/compact` 共用同一份名单；`names` 会去 `qqbot-people.json` 里查 |
+| 生图技能 | `qqbot-role-skills.json` 里 `id` 等于 `imagePermission.skill`（缺省 `image-gen`）的那个技能 | 只认这个技能的 `audiences`；别的技能写了什么权限字段都不算 |
+| 好感度 | `qqbot-people.json` 的 `social.affinity` | 达到 `imagePermission.affinityMin`（缺省 60）即放行 |
+
+**生图是一个独立的技能**，和「强者语」这类语言风格技能互不影响：风格技能的受众不会因此获得画图权限，生图技能也不会注入任何提示词。它没有 `SKILL.md`，只是靠 `audiences` 决定谁能用。
+
+```json
+{
+  "imagePermission": { "affinityMin": 60, "skill": "image-gen" },
+  "skills": [
+    {
+      "id": "image-gen",
+      "name": "生图",
+      "kind": "capability",
+      "enabled": true,
+      "audiences": [{ "person": "叶兰舟", "openids": ["…"], "groups": [], "default": true }]
+    }
+  ]
+}
+```
+
+- `kind: "capability"` 只用于面板把能力型技能从「语言风格」下拉里排除，权限判定不依赖它。
+- 三个文件都是**每次调用现读**，改完不用重启机器人。
+- 档案里查不到这个人（没有 openid 记录）时好感度视为不通过，不会默认给 50。
+- 被拒时工具返回 `forbidden`，并说明缺的是哪一条；提示词里明确要求模型不要重试、不要换说法绕过。
+
+## 有权限的人直接说话就行，不用打 /生图
+
+授权只和**人**有关，和句式无关：主人、生图技能受众、好感度达标的人，每轮消息都会拿到一次授权，**由模型自己判断这轮是不是真的要画图**。`/生图 描述` 仍然可用，但不再是必要条件。
+
+- 没权限的人说什么都不行（`forbidden`），也不会产生任何请求。
+- 授权仍然绑定「真实原始事件 + 本轮 + 当前会话」：伪造/合并/历史的原始事件一律拒绝，轮次结束即撤销。
+- 一轮只能画一张；模型重复调用会拿到 `not_authorized`。
+- 代价：模型如果误判（把“这张图真好看”当成要画图），会真的画一张。只有授权成员有这个风险，且限流仍然生效。
 
 ## 什么消息才授权一次生成
 
@@ -98,6 +149,8 @@ export QQBOT_IMAGE_GENERATION=off
 
 - OpenAI：`POST https://api.openai.com/v1/images/generations`，`n:1`、`output_format:png`，只接受响应中的 `b64_json`。
 - 硅基流动：`POST https://api.siliconflow.cn/v1/images/generations`，发送 `model`、`prompt`、`image_size`；响应返回 1 小时有效的图片 URL，工具只下载该 URL 一次，且必须为 https、非内网地址、不超过 8 MiB，再按 PNG/JPEG 魔数校验。
+- Cloudflare：`POST https://api.cloudflare.com/client/v4/accounts/<账号ID>/ai/run/@cf/black-forest-labs/flux-1-schnell`，只发送 `prompt` 与 `steps:4`；响应是 `result.image` 里的 base64 JPEG，不走 URL 下载。
+- **Cloudflare 的 prompt 会先被聊天模型改写。** `flux-1-schnell` 基本只认英文，直接喂中文会画出不相干的东西（实测「星空鲸鱼」出雪地月亮）。所以发送前会先调一次聊天模型（默认 `opencode-go` / `deepseek-v4.1-flash`，可用 `QQBOT_IMAGE_PROMPT_PROVIDER` / `QQBOT_IMAGE_PROMPT_MODEL` 覆盖）：理解用户的中文意图、补全主体/风格/构图/光线/画幅，输出一条英文提示词，再发给 Cloudflare。改写失败时退回原文并在回执里注明，不会因此扣两次钱。
 - 工具 prompt 为 `1..4000` 字且不超过 16 KiB，只发送本次新 prompt 及模型/尺寸/质量等必要参数。
 - 不自动附带群历史、参考图片、人设、记忆或聊天附件；**prompt 自己若含隐私，它仍会发给对应服务商**。
 - 不接受自定义 URL，不经过自定义聊天网关；没有参考图、编辑、批量生成、付费后端回退或生图自动重试。
@@ -130,5 +183,6 @@ API 的 fetch 和读取响应体受配置的超时及取消信号约束。但 QQ
 - [OpenAI 官方图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)
 - [OpenAI 官方 Images Generate API 参考](https://developers.openai.com/api/reference/resources/images/methods/generate)
 - [硅基流动创建图片生成请求](https://docs.siliconflow.cn/docs/api/images-generations-post)
+- [Cloudflare flux-1-schnell 模型卡](https://developers.cloudflare.com/ai/models/%40cf/black-forest-labs/flux-1-schnell/)
 
 官方能力、价格、条款与可用模型会变化。本工具只开放上述受限子集，不通过扩宽 URL、移除限流或猜测模型名来绕过限制。

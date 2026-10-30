@@ -383,9 +383,11 @@
     <form id="imageGenerationForm" autocomplete="off">
       <div class="card">
         <h2>生图（默认关闭）</h2>
-        <div class="alert warn">是否计费取决于所选模型：OpenAI 按官方规则计费，复用上方 <span class="kbd">OPENAI_API_KEY</span>；硅基流动 <span class="kbd">Kwai-Kolors/Kolors</span> 当前为免费模型，复用 <span class="kbd">SILICONFLOW_API_KEY</span>。保存 Key 不会自动启用生图，空白或缺失 Key 不会发起生图请求。</div>
-        <p class="hint">仅用于用户明确提出的画图请求，每次单张，不自动重试。只发送本轮新 prompt，不附带群历史或参考图。请求固定发往所选模型对应的官方接口（OpenAI <span class="kbd">api.openai.com/v1/images/generations</span>，硅基流动 <span class="kbd">api.siliconflow.cn/v1/images/generations</span>），不经过自定义聊天网关，也不接受自定义接口 URL。</p>
-        <p class="hint">硅基流动返回 1 小时有效的图片链接，工具只下载一次并校验 PNG/JPEG 后发送；其免费模型默认带「AI 生成」水印。生图设置保存后动态生效，无需重启；新填或更换 Key 仍需重启机器人，才能加载进启动环境。保存设置和刷新状态不会调用生图接口或验证模型权限。</p>
+        <div class="alert warn">费用取决于所选模型：OpenAI 按官方规则计费（<span class="kbd">OPENAI_API_KEY</span>）；硅基流动 <span class="kbd">Kwai-Kolors/Kolors</span> 当前免费（<span class="kbd">SILICONFLOW_API_KEY</span>，需实名认证）；Cloudflare <span class="kbd">flux-1-schnell</span> 走每日免费额度（<span class="kbd">CLOUDFLARE_API_TOKEN</span> + <span class="kbd">CLOUDFLARE_ACCOUNT_ID</span>）。保存 Key 不会自动启用生图，空白或缺失 Key 不会发起生图请求。</div>
+        <p class="hint">权限：只有主人、<span class="kbd">image-gen</span> 这个生图技能的受众、或好感度达到门槛（缺省 60）的成员能画。有权限的人直接用大白话要图就行，不必打 <span class="kbd">/生图</span>；没权限的人不会产生任何请求。</p>
+        <p class="hint">Cloudflare 的 <span class="kbd">flux-1-schnell</span> 基本只认英文：发送前会先让聊天模型理解中文意图、补全画面，再改写成一条英文提示词（多 1–2 秒）；改写失败则按原文发送并在回执里注明。想换改写用的模型用 <span class="kbd">QQBOT_IMAGE_PROMPT_PROVIDER</span> / <span class="kbd">QQBOT_IMAGE_PROMPT_MODEL</span>。</p>
+        <p class="hint">每次单张、不自动重试；只发送本轮新 prompt，不附带群历史或参考图。请求固定发往所选模型对应的官方接口，不经过自定义聊天网关，也不接受自定义接口 URL。硅基流动返回 1 小时有效链接，工具只下载一次并校验 PNG/JPEG；免费模型默认带「AI 生成」水印。</p>
+        <p class="hint">生图设置保存后动态生效，无需重启；新填或更换 Key 需要重启机器人才会注入启动环境（运行时也会直接读 <span class="kbd">~/.dsh/.credentials.yaml</span>）。保存设置和刷新状态不会调用生图接口，也不验证额度或权限。</p>
         <fieldset id="imageGenerationFields" disabled style="border:0;padding:0;margin:0">
           <legend class="muted">频率限制按每个会话单独计算</legend>
           <label><input type="checkbox" id="imageEnabled" /> 显式启用生图</label>
@@ -400,6 +402,9 @@
               </optgroup>
               <optgroup label="硅基流动（免费）">
                 <option value="Kwai-Kolors/Kolors">Kwai-Kolors/Kolors</option>
+              </optgroup>
+              <optgroup label="Cloudflare（每日免费额度）">
+                <option value="@cf/black-forest-labs/flux-1-schnell">flux-1-schnell</option>
               </optgroup>
             </select></div>
             <div class="field"><label for="imageSize">尺寸</label><select id="imageSize"><option value="1024x1024">1024 × 1024（方形）</option><option value="1536x1024">1536 × 1024（横向）</option><option value="1024x1536">1024 × 1536（纵向）</option><option value="960x1280">960 × 1280（竖版，硅基流动）</option><option value="768x1024">768 × 1024（竖版，硅基流动）</option></select></div>
@@ -862,7 +867,9 @@ const credentialFields = [
   { key: 'QQBOT_APPID', title: 'QQ 机器人 AppID', hint: '从 QQ 开放平台机器人管理页获取。', qq: true, type: 'text' },
   { key: 'QQBOT_SECRET', title: 'QQ 机器人密钥', hint: '机器人 Client Secret，不是个人 QQ 密码。', qq: true },
   { key: 'OPENAI_API_KEY', title: 'OpenAI', hint: 'OpenAI 官方聊天与生图；按官方 API 计费。' },
-  { key: 'SILICONFLOW_API_KEY', title: '硅基流动（可选，免费生图）', hint: '用于 Kwai-Kolors/Kolors 免费生图；需在硅基流动控制台完成实名认证后创建 Key。' },
+  { key: 'SILICONFLOW_API_KEY', title: '硅基流动（可选，免费生图）', hint: 'Kwai-Kolors/Kolors 生图用；控制台完成实名认证后创建，保存后重启机器人生效。' },
+  { key: 'CLOUDFLARE_API_TOKEN', title: 'Cloudflare API Token（可选，免费额度生图）', hint: 'flux-1-schnell 生图用；控制台创建，权限至少 Workers AI: Read。' },
+  { key: 'CLOUDFLARE_ACCOUNT_ID', title: 'Cloudflare Account ID', hint: '32 位十六进制账号 ID，与上面的 Token 配对；不是密钥，但缺它拼不出账号作用域接口。' },
   { key: 'DEEPSEEK_API_KEY', title: 'DeepSeek', hint: 'DeepSeek API 路由及相关搜索/读取功能，是否需要取决于当前配置。' },
   { key: 'XIANGXIN_API_KEY', title: '象信 AI（判断模型，推荐）', hint: '先用它做回复 / 记忆门控与分类，主模型只处理值得回的消息，可大幅节省 Token。' },
   { key: 'OPENCODE_GO_API_KEY', title: 'OpenCode Go（可选）', hint: '现有部分辅助判断或对应模型路由可能依赖，不是免费模型通行证。' },
@@ -982,12 +989,14 @@ const imageGenerationControls = {
   cooldownSeconds: 'imageCooldown', maxPerHour: 'imageMaxPerHour', timeoutSeconds: 'imageTimeout',
 };
 const imageGenerationModels = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors'];
-const imageGenerationFreeModels = ['Kwai-Kolors/Kolors'];
+const imageGenerationFreeModels = ['Kwai-Kolors/Kolors', '@cf/black-forest-labs/flux-1-schnell'];
 const imageGenerationSizes = {
   openai: ['1024x1024', '1536x1024', '1024x1536'],
   siliconflow: ['1024x1024', '960x1280', '768x1024'],
+  cloudflare: ['1024x1024'],
 };
-const imageGenerationProviderOf = (model) => imageGenerationFreeModels.includes(model) ? 'siliconflow' : 'openai';
+const imageGenerationProviderOf = (model) => model === 'Kwai-Kolors/Kolors' ? 'siliconflow'
+  : model === '@cf/black-forest-labs/flux-1-schnell' ? 'cloudflare' : 'openai';
 const imageGenerationSizesFor = (model) => imageGenerationSizes[imageGenerationProviderOf(model)];
 let imageGenerationLoaded = false;
 let imageGenerationBusy = false;

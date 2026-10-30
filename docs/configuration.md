@@ -50,6 +50,8 @@ npm run panel
 | `QQBOT_SECRET` | 腾讯机器人应用 Secret | 使用 QQ 接入需要 |
 | `OPENAI_API_KEY` | OpenAI 官方聊天、联网辅助与可选单张生图 | 使用对应服务时；生图不要求聊天 provider 也是 OpenAI |
 | `SILICONFLOW_API_KEY` | 硅基流动免费生图（`Kwai-Kolors/Kolors`） | 只有选该模型生图时才需要；需先完成实名认证 |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare Workers AI 生图（`flux-1-schnell`） | 需要 Workers AI 权限；配合账号 ID 使用 |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账号 ID（32 位十六进制） | 不是密钥，但缺它无法拼出账号作用域接口 |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 API / 对应搜索读取 | 使用对应服务时 |
 | `SILICONFLOW_API_KEY` | 硅基流动，免费生图模型 `Kwai-Kolors/Kolors` | 使用免费生图时；免费额度与条款以上游为准 |
 | `XIANGXIN_API_KEY` | 象信结构化判定（推荐的**判断模型**，省 Token） | 建议配置；未配置时相关门控自动放行 |
@@ -107,10 +109,10 @@ npm run panel
 
 只接受完整七字段对象，拒绝未知字段、任意 URL 和字符串数字。`gpt-image-1` 已下线，不支持它或 DALL·E。文件限 16 KiB，原子 `0600` 写入；目录祖先或目标符号链接、目标硬链接会被拒绝。
 
-- 模型决定服务商与固定接口：`gpt-image-*` 用 `OPENAI_API_KEY` 调 `api.openai.com/v1/images/generations`；`Kwai-Kolors/Kolors` 用 `SILICONFLOW_API_KEY` 调 `api.siliconflow.cn/v1/images/generations`。不经自定义聊天网关；DeepSeek/免费聊天路由也可使用这项独立能力。
+- 模型决定服务商与固定接口：`gpt-image-*` 用 `OPENAI_API_KEY` 调 `api.openai.com/v1/images/generations`；`Kwai-Kolors/Kolors` 用 `SILICONFLOW_API_KEY` 调 `api.siliconflow.cn/v1/images/generations`；`@cf/black-forest-labs/flux-1-schnell` 用 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` 调账号作用域的 `/ai/run/` 接口。不经自定义聊天网关；DeepSeek/免费聊天路由也可使用这项独立能力。
 - 生图设置下一次调用动态读取；**新 Key 仍需重启**。空白 Key 不自动启用或调用生图。
 - `QQBOT_IMAGE_GENERATION=off` 可额外禁止；`on` 不能越过 JSON 的关闭状态。环境变量改变需要由实际机器人进程继承。
-- 仅当前真实 QQ group/C2C 消息的明确画图请求可授权。群聊推荐 `@机器人 /生图 一只看星星的鲸鱼`；自然语句保守识别，不能当作完整 NLP 授权保证。
+- 仅当前真实 QQ group/C2C 消息的明确画图请求可授权，且发送者必须是主人、`imagePermission.skill`（缺省 `image-gen`）这个独立生图技能的受众，或好感度达到 `imagePermission.affinityMin`（缺省 60）的成员；详见[生图指南](<image-generation.md#谁能生图主人--生图技能--好感度>)。群聊推荐 `@机器人 /生图 一只看星星的鲸鱼`；自然语句保守识别，不能当作完整 NLP 授权保证。
 - 每次单张、只发本次新 prompt、不附历史/参考图、不自动重试。单进程每小时硬上限 10 次、最多一张在途；失败/取消/不确定 API 尝试也计数，重启清零，不是金额预算。
 
 ## 人格、说话人模块与低打扰

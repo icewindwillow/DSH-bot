@@ -1156,8 +1156,9 @@ const server = createServer((req, res) => {
       out[person.name] = effectiveModuleFor(person);
     }
     const roleDoc = readJsonFile(ROLE_REGISTRY, { skills: [] });
+    // 能力型技能（如生图权限）不是语言风格，不列入「风格」下拉。
     const skills = (Array.isArray(roleDoc.skills) ? roleDoc.skills : [])
-      .filter((skill) => skill && skill.enabled !== false)
+      .filter((skill) => skill && skill.enabled !== false && skill.kind !== 'capability')
       .map((skill) => ({ id: String(skill.id ?? ''), name: String(skill.name ?? skill.id ?? '') }));
     return send(200, { ok: true, people: out, skills });
   }
@@ -1178,7 +1179,8 @@ const server = createServer((req, res) => {
         : [];
       const styleSkill = String(input.style?.skill ?? '').trim();
       const roleDocForSkill = readJsonFile(ROLE_REGISTRY, { skills: [] });
-      const skillExists = (Array.isArray(roleDocForSkill.skills) ? roleDocForSkill.skills : []).some((skill) => skill.id === styleSkill);
+      const skillExists = (Array.isArray(roleDocForSkill.skills) ? roleDocForSkill.skills : [])
+        .some((skill) => skill.id === styleSkill && skill.kind !== 'capability');
       const next = {
         collectImages: { enabled: input.collectImages?.enabled === true, categories },
         topics: { enabled: input.topics?.enabled === true, topics },

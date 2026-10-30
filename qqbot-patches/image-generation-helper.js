@@ -22,12 +22,103 @@ const QQBOT_IMAGE_PROVIDERS = Object.freeze({
         sizes: ['1024x1024', '960x1280', '768x1024'],
         quality: false, result: 'url', billing: 'free',
     }),
+    cloudflare: Object.freeze({
+        label: 'Cloudflare', credential: 'CLOUDFLARE_API_TOKEN', accountCredential: 'CLOUDFLARE_ACCOUNT_ID',
+        // flux-1-schnell has no width/height input and answers with JSON-wrapped base64 JPEG.
+        endpoint: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/black-forest-labs/flux-1-schnell',
+        models: ['@cf/black-forest-labs/flux-1-schnell'],
+        sizes: ['1024x1024'],
+        quality: false, result: 'cloudflare_b64', billing: 'free-tier', maxPrompt: 2048, rewritePrompt: true,
+    }),
 });
 const QQBOT_IMAGE_MODELS = Object.values(QQBOT_IMAGE_PROVIDERS).flatMap((provider) => provider.models);
 function qqbotImageProvider(model) {
     for (const [name, provider] of Object.entries(QQBOT_IMAGE_PROVIDERS))
         if (provider.models.includes(model)) return { name, ...provider };
     return undefined;
+}
+
+// ── 生图权限 ───────────────────────────────────────────────────────────────
+// 三种放行方式：主人（qqbot-command-owners.json）、生图技能自己的受众
+// （qqbot-role-skills.json 里 id 等于 imagePermission.skill 的那个技能）、好感度阈值
+// （qqbot-people.json 的 social.affinity）。生图是独立技能，别的角色技能不会顺带放行。
+// 配置写在 qqbot-role-skills.json 顶层 imagePermission；缺文件或损坏按缺省值，不因此放开。
+const QQBOT_IMAGE_PERMISSION_DEFAULTS = Object.freeze({ affinityMin: 60, skill: 'image-gen' });
+
+function qqbotImageReadJson(profileDir, name) {
+    const fs = process.getBuiltinModule('node:fs');
+    const path = process.getBuiltinModule('node:path');
+    const file = path.join(profileDir, name);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4 * 1024 * 1024) throw new Error('unsafe permission source');
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+function qqbotImagePermission(profileDir) {
+    const defaults = QQBOT_IMAGE_PERMISSION_DEFAULTS;
+    try {
+        const raw = qqbotImageReadJson(profileDir, 'qqbot-role-skills.json')?.imagePermission;
+        const affinityMin = Number(raw?.affinityMin);
+        const skill = typeof raw?.skill === 'string' && raw.skill.trim() !== '' ? raw.skill.trim() : defaults.skill;
+        return {
+            affinityMin: Number.isInteger(affinityMin) && affinityMin >= 0 && affinityMin <= 100 ? affinityMin : defaults.affinityMin,
+            skill,
+        };
+    } catch { /* 缺文件或损坏都按缺省阈值，不因此放开 */ }
+    return { ...defaults };
+}
+function qqbotImageNames(person) {
+    const out = [person?.name, person?.addressing];
+    for (const key of Object.keys(person ?? {})) if (key.indexOf('nickname') === 0) out.push(person[key]);
+    if (Array.isArray(person?.aliases)) out.push(...person.aliases);
+    return out.filter((name) => typeof name === 'string' && name.trim() !== '').map((name) => name.trim());
+}
+function qqbotImagePerson(profileDir, senderId) {
+    try {
+        const people = qqbotImageReadJson(profileDir, 'qqbot-people.json')?.people;
+        return (Array.isArray(people) ? people : []).find((person) => Array.isArray(person?.openids) && person.openids.includes(senderId));
+    } catch { return undefined; }
+}
+function qqbotImageAffinity(person) {
+    const raw = Number(person?.social?.affinity ?? person?.affinity);
+    return Number.isFinite(raw) ? raw : undefined;
+}
+function qqbotImageIsOwner(profileDir, senderId, person) {
+    let owners;
+    try { owners = qqbotImageReadJson(profileDir, 'qqbot-command-owners.json'); } catch { return false; }
+    if ((Array.isArray(owners?.openids) ? owners.openids : []).includes(senderId)) return true;
+    const names = (Array.isArray(owners?.names) ? owners.names : []).map((name) => String(name).trim()).filter(Boolean);
+    if (names.length === 0 || !person) return false;
+    return qqbotImageNames(person).some((name) => names.includes(name));
+}
+// 角色放行：只认 imagePermission.skill 指名的那个生图技能，看它的 audiences
+// （openid 或人名；groups 非空时还要命中群）。别的技能即使写了权限字段也不算。
+function qqbotImageRoleGrant(profileDir, gid, senderId, person, skillId) {
+    let skills;
+    try { skills = qqbotImageReadJson(profileDir, 'qqbot-role-skills.json')?.skills; } catch { return undefined; }
+    const skill = (Array.isArray(skills) ? skills : []).find((item) => item && String(item.id ?? '') === skillId);
+    if (!skill) return undefined;
+    for (const audience of Array.isArray(skill.audiences) ? skill.audiences : []) {
+        if (!audience || typeof audience !== 'object') continue;
+        const groups = (Array.isArray(audience.groups) ? audience.groups : []).filter((group) => typeof group === 'string' && group.trim() !== '');
+        if (groups.length > 0 && !groups.includes(gid)) continue;
+        if (Array.isArray(audience.openids) && audience.openids.includes(senderId)) return skillId;
+        const wanted = String(audience.person ?? '').trim().toLowerCase();
+        if (wanted && person && qqbotImageNames(person).some((name) => name.toLowerCase() === wanted)) return skillId;
+    }
+    return undefined;
+}
+function qqbotImagePermissionCheck(profileDir, msg) {
+    const permission = qqbotImagePermission(profileDir);
+    const senderId = typeof msg?.senderId === 'string' ? msg.senderId : '';
+    if (!senderId) return { allowed: false, affinityMin: permission.affinityMin, skill: permission.skill };
+    const person = qqbotImagePerson(profileDir, senderId);
+    if (qqbotImageIsOwner(profileDir, senderId, person)) return { allowed: true, via: 'owner' };
+    const gid = msg.kind === 'group' ? msg.groupOpenid : '';
+    const role = qqbotImageRoleGrant(profileDir, gid, senderId, person, permission.skill);
+    if (role) return { allowed: true, via: 'role', role };
+    const affinity = qqbotImageAffinity(person);
+    if (affinity !== undefined && affinity >= permission.affinityMin) return { allowed: true, via: 'affinity', affinity };
+    return { allowed: false, affinity, affinityMin: permission.affinityMin, skill: permission.skill };
 }
 
 function qqbotImageCheckDirectory(directory, create = false) {
@@ -74,18 +165,6 @@ function qqbotImageReadSettings(profileDir) {
         || !Number.isInteger(value.maxPerHour) || value.maxPerHour < 1 || value.maxPerHour > 10
         || !Number.isInteger(value.timeoutSeconds) || value.timeoutSeconds < 30 || value.timeoutSeconds > 300) throw new Error('invalid image configuration');
     return value;
-}
-
-// Conservative command recognition is a spending fence, not a language-understanding guarantee.
-// Quoted/history/attachment/ASR content is deliberately not considered. /生图 is the unambiguous form.
-function qqbotImageExplicitRequest(value) {
-    if (typeof value !== 'string' || value.length > 8000) return false;
-    const text = value.trim().replace(/^(?:<@!?[A-Za-z0-9_-]+>\s*)+/, '').trim();
-    if (/^\/(?:生图|画图|image)\s+\S/i.test(text)) return true;
-    if (/^(?:不要|别|禁止|不用|不需要|停止|取消|请勿|如何|怎么|什么|为什么|是否)/.test(text)) return false;
-    if (/(?:生图|画图|绘图)(?:功能|接口|配置|教程|代码|文档)/i.test(text)) return false;
-    return /^(?:(?:请|麻烦|能不能|可以|能|帮我|给我|帮忙|你|小易)[，,\s]*){0,6}(?:画(?:一|只|个|张|幅|些|一下|画)?|绘制|生图|生成(?:一张|一幅|一份|一|张|个|幅)?(?:图片|图像|图|插画|海报|壁纸|头像))\s*\S/.test(text)
-        || /^(?:(?:please|can you|could you|would you)\s+)?(?:draw|paint|(?:generate|create)\s+(?:an?\s+)?(?:image|picture|illustration|poster|wallpaper|avatar))\s+\S/i.test(text);
 }
 
 async function qqbotImageReadBody(response, signal, limit) {
@@ -196,14 +275,30 @@ function qqbotImageInspect(bytes, size, exact) {
     }
     return { extension, width: actual.width, height: actual.height };
 }
-function qqbotImageDecodeBase64(data, size) {
-    if (data?.error || !Array.isArray(data?.data) || data.data.length !== 1) throw new Error('missing image result');
-    const encoded = data.data[0]?.b64_json;
+// 模型返回的英文提示词：去掉代码块/引号/前缀，压成一行，限制长度。
+function qqbotImageCleanPrompt(value) {
+    let text = String(value ?? '').trim();
+    if (text === '') return '';
+    text = text.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '');
+    text = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join(' ');
+    text = text.replace(/^(?:prompt|english prompt|英文提示词|提示词)\s*[:：]\s*/i, '');
+    text = text.replace(/^["'“”「」]+/, '').replace(/["'“”「」]+$/, '').trim();
+    return text.length > 2000 ? text.slice(0, 2000).trim() : text;
+}
+function qqbotImageFromBase64(encoded, size) {
     if (typeof encoded !== 'string' || encoded.length < 44 || encoded.length > 12 * 1024 * 1024
         || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('invalid image encoding');
     const bytes = Buffer.from(encoded, 'base64');
     if (bytes.toString('base64') !== encoded) throw new Error('invalid image encoding');
     return { bytes, ...qqbotImageInspect(bytes, size, true) };
+}
+function qqbotImageDecodeBase64(data, size) {
+    if (data?.error || !Array.isArray(data?.data) || data.data.length !== 1) throw new Error('missing image result');
+    return qqbotImageFromBase64(data.data[0]?.b64_json, size);
+}
+function qqbotImageDecodeCloudflare(data, size) {
+    if (data?.success === false || (Array.isArray(data?.errors) && data.errors.length)) throw new Error('image provider error');
+    return qqbotImageFromBase64(data?.result?.image, size);
 }
 
 function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
@@ -241,19 +336,65 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             return valid(match?.[1]?.replace(/^['"]|['"]$/g, '').trim());
         } catch { return undefined; }
     };
+    // 只给「只认英文」的模型用：先让聊天模型理解意图、补全画面，再产出英文提示词。
+    const rewriteImagePrompt = async (text, signal) => {
+        let llm;
+        try { llm = ctx.get('llm'); } catch { llm = undefined; }
+        if (!llm || typeof llm.stream !== 'function') return '';
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        const relay = () => controller.abort();
+        signal?.addEventListener?.('abort', relay, { once: true });
+        let out = '';
+        try {
+            for await (const chunk of llm.stream({
+                provider: process.env.QQBOT_IMAGE_PROMPT_PROVIDER ?? 'opencode-go',
+                model: process.env.QQBOT_IMAGE_PROMPT_MODEL ?? 'deepseek-v4.1-flash',
+                system: [
+                    '你在给图片模型 FLUX.1 写提示词。用户会用中文说想要什么画面，可能很简略、有错别字、口语化，或者只有半句话。',
+                    '你的任务：理解他真正想要的画面，补全成一条英文提示词，包含主体、动作、场景、风格、构图或镜头、光线、色调、画幅比例。',
+                    '保留用户明确提出的要求，不要改主题；不要加入真实人名、账号、群号或任何隐私；不要解释、不要寒暄。',
+                    '只输出这一条英文提示词，单行，不超过 300 词。',
+                ].join('\n'),
+                messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+                maxTokens: 400, reasoningEffort: 'low', signal: controller.signal,
+            })) {
+                if (!chunk) continue;
+                if (chunk.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text;
+                else if (chunk.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) return '';
+            }
+        } catch { return ''; }
+        finally {
+            clearTimeout(timer);
+            signal?.removeEventListener?.('abort', relay);
+        }
+        return qqbotImageCleanPrompt(out);
+    };
     const authorize = (record, msg, userMessage) => {
         if (!record || !msg) return;
         // Every real inbound replaces the previous grant, including non-image requests.
         record.__qqbotImageGenerationGrant = undefined;
+        record.__qqbotImageDenied = undefined;
         const raw = msg.raw;
         if (!['group', 'c2c'].includes(msg.kind) || typeof msg.messageId !== 'string' || !msg.messageId
             || raw?.id !== msg.messageId || typeof raw?.content !== 'string'
-            || typeof userMessage?.id !== 'string' || !userMessage.id || !qqbotImageExplicitRequest(raw.content)) return;
+            || typeof userMessage?.id !== 'string' || !userMessage.id) return;
         const scope = msg.kind;
         const targetId = scope === 'group' ? msg.groupOpenid : msg.senderId;
         const rawSender = scope === 'group' ? raw.author?.member_openid : raw.author?.user_openid;
         if (typeof targetId !== 'string' || !targetId || typeof rawSender !== 'string' || !rawSender || rawSender !== msg.senderId
             || (scope === 'group' && raw.group_openid !== targetId) || record.scope !== scope || record.peerId !== targetId) return;
+        // 权限在授权阶段判定：没有权限的请求根本不会产生 grant，也不会进入限流计数。
+        // 有权限的人不再需要 /生图 语法：每轮给一次授权，由模型判断这轮是不是真的要画图。
+        const permission = qqbotImagePermissionCheck(profileDir, msg);
+        if (!permission.allowed) {
+            record.__qqbotImageDenied = {
+                msgId: msg.messageId, userMessageId: userMessage.id,
+                affinity: permission.affinity, affinityMin: permission.affinityMin,
+                expiresAt: Date.now() + 5 * 60 * 1000,
+            };
+            return;
+        }
         record.__qqbotImageGenerationGrant = {
             scope, targetId, msgId: msg.messageId, userMessageId: userMessage.id,
             expiresAt: Date.now() + 5 * 60 * 1000, used: false,
@@ -265,7 +406,10 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
         if (event?.type !== 'turn/end') return;
         try {
             const record = manager.findBySessionId?.(session?.header?.id ?? '');
-            if (record) record.__qqbotImageGenerationGrant = undefined;
+            if (record) {
+                record.__qqbotImageGenerationGrant = undefined;
+                record.__qqbotImageDenied = undefined;
+            }
         } catch { /* Revocation must not break another plugin's event listener. */ }
     });
     ctx.on?.('dispose', () => {
@@ -277,10 +421,11 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
         name: 'generate_image',
         description: [
             '使用管理员配置的图片接口生成一张新图片，并真实发送到当前 QQ 群或私聊。',
-            '仅在当前用户明确要求画图时调用；不用于普通搜图、看图、编辑上传图片或后台任务。',
-            'prompt 只写本次画面要求（最多4000字），不要附带群历史、人物档案、密钥或引用原文。',
+            '用户用平常说话的方式要图就可以调用，不必要求他打 /生图；但只有确实在要一张图时才调用，普通聊图、看图、搜图不要调用。',
+            '只有主人、被授予生图权限的角色或好感度达标的成员能画；没有权限时不要重试或换说法绕过。',
+            'prompt 用中文写清楚画面（最多4000字）：主体、动作、场景、风格、构图都要写；只认英文的模型会由系统自动补全并翻译，所以要把用户真实意图写全，不要只丢关键词。不要附带群历史、人物档案、密钥或引用原文。',
             '不传模型、尺寸、地址、收件人或张数，均由管理员设置。',
-            '失败或超时不要自动重试，也不要宣称已经发图；需要时请用户发新的 /生图 请求。',
+            '失败或超时不要自动重试，也不要宣称已经发图；需要时请用户重新描述一次。',
         ].join(''),
         parameters: { type: 'object', additionalProperties: false, properties: {
             prompt: { type: 'string', description: '当前用户要求的画面，最多4000字。不包含历史消息或参考图。', minLength: 1, maxLength: 4000 },
@@ -302,10 +447,18 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             if (!provider) return result('configuration_error', '生图模型不在允许清单内，请管理员在本机面板重新选择；没有发送生图请求。');
             const key = await resolveImageKey(provider.credential);
             if (!key) return result('missing_key', `未配置可用的 ${provider.credential}；在本机面板或 DSH 凭据中保存后，重启机器人加载。`);
+            let accountId;
+            if (provider.accountCredential) {
+                accountId = await resolveImageKey(provider.accountCredential);
+                if (!/^[0-9a-f]{32}$/i.test(accountId ?? '')) return result('missing_key', `未配置有效的 ${provider.accountCredential}（32 位十六进制账号 ID）；在本机面板或 DSH 凭据中保存后，重启机器人加载。`);
+            }
             if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some((name) => name !== 'prompt')
                 || typeof args.prompt !== 'string' || !args.prompt.trim() || args.prompt.length > 4000 || Buffer.byteLength(args.prompt) > 16384) {
                 return result('invalid_prompt', '请只提供本次画面要求 prompt（1–4000字），不能指定地址、收件人或额外参数。');
             }
+            // Per-provider prompt ceiling; refused before an attempt is reserved, so nothing is billed.
+            if (provider.maxPrompt && args.prompt.trim().length > provider.maxPrompt)
+                return result('prompt_too_long', `${provider.label} 的 prompt 上限是 ${provider.maxPrompt} 字，本次没有发起生图请求；请缩短后重新发送「/生图 描述」。`);
             let record;
             try {
                 record = exec?.agent && (manager.findByAgent(exec.agent)
@@ -322,6 +475,14 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
                 || !['group', 'c2c'].includes(record.scope) || grant.scope !== record.scope || grant.targetId !== record.peerId
                 || target.scope !== grant.scope || target.targetId !== grant.targetId || target.msgId !== grant.msgId
                 || latestUser?.source?.kind !== 'user' || latestUser?.id !== grant.userMessageId) {
+                const denied = record?.__qqbotImageDenied;
+                if (!grant && denied && denied.expiresAt > Date.now() && denied.msgId === record?.replyTarget?.msgId
+                    && denied.userMessageId === latestUser?.id) {
+                    const hint = denied.affinity === undefined
+                        ? `你的档案里还没有好感度记录，需要达到 ${denied.affinityMin}`
+                        : `好感度还没达到 ${denied.affinityMin}`;
+                    return result('forbidden', `当前账号没有生图权限：只有主人、被授予生图权限的角色，或好感度达标的成员可以画图；${hint}。不要重试，也不用换个说法再试。`);
+                }
                 return result('not_authorized', '无法确认当前会话有一条尚未使用的明确画图请求。请用户发送「/生图 画面描述」；不会使用其它群或历史请求。');
             }
             if (exec?.signal?.aborted || lifetime.signal.aborted) return result('cancelled', '本轮已取消，没有发起生图请求。');
@@ -350,11 +511,20 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             let phase = 'generation';
             try {
                 signal.throwIfAborted();
-                const prompt = args.prompt.trim();
+                let prompt = args.prompt.trim();
+                let rewritten = false;
+                if (provider.rewritePrompt) {
+                    const english = await rewriteImagePrompt(prompt, signal);
+                    if (english) { prompt = english; rewritten = true; }
+                    signal.throwIfAborted();
+                }
                 const requestBody = provider.result === 'b64_json'
                     ? { model: settings.model, prompt, n: 1, size: settings.size, quality: settings.quality, output_format: 'png' }
-                    : { model: settings.model, prompt, image_size: settings.size };
-                const response = await fetch(provider.endpoint, {
+                    : provider.result === 'url'
+                        ? { model: settings.model, prompt, image_size: settings.size }
+                        : { prompt, steps: 4 };
+                const endpoint = provider.accountCredential ? provider.endpoint.replace('{account}', accountId) : provider.endpoint;
+                const response = await fetch(endpoint, {
                     method: 'POST', redirect: 'error', signal,
                     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
                     body: JSON.stringify(requestBody),
@@ -369,6 +539,7 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
                 const data = await qqbotImageReadResponse(response, signal);
                 let image;
                 if (provider.result === 'b64_json') image = qqbotImageDecodeBase64(data, settings.size);
+                else if (provider.result === 'cloudflare_b64') image = qqbotImageDecodeCloudflare(data, settings.size);
                 else {
                     const downloaded = await qqbotImageDownload(qqbotImageResultUrl(data), signal);
                     image = { bytes: downloaded, ...qqbotImageInspect(downloaded, settings.size, false) };
@@ -397,9 +568,13 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
                     || typeof delivered?.message?.id !== 'string' || !delivered.message.id.trim()) {
                     return result('delivery_failed', '图片已生成，但 QQ 没有确认发送成功；不要重新生图重试，本次生成可能已计费。');
                 }
-                return result('sent', provider.billing === 'free'
-                    ? `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 图片接口，当前为免费模型。`
-                    : `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 图片接口，可能产生费用。`);
+                if (provider.billing === 'free') return result('sent', `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 图片接口，当前为免费模型。`);
+                if (provider.billing === 'free-tier') {
+                    return result('sent', rewritten
+                        ? `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 免费额度；提示词已由聊天模型补全成英文。`
+                        : `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 免费额度；英文提示词补全失败，按原文发送，效果可能跑偏。`);
+                }
+                return result('sent', `已生成并向当前 QQ 会话发送一张图片。本次使用 ${provider.label} 图片接口，可能产生费用。`);
             } catch {
                 if (phase === 'delivery') return result('delivery_failed', '图片已生成，但 QQ 发送未确认成功；不要宣称已发图，也不要重新生图重试。');
                 if (phase === 'storage') return result('storage_failed', '图片已生成，但本机临时存储不可用，未发送；本次生成可能已计费。');

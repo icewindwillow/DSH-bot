@@ -36,6 +36,19 @@ export const IMAGE_GENERATION_PROVIDERS = Object.freeze({
     quality: false,
     billing: 'free',
   }),
+  cloudflare: Object.freeze({
+    label: 'Cloudflare',
+    credential: 'CLOUDFLARE_API_TOKEN',
+    // The account id is a 32-hex account identifier, not a secret, but it must be present.
+    accountCredential: 'CLOUDFLARE_ACCOUNT_ID',
+    endpointTemplate: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/black-forest-labs/flux-1-schnell',
+    models: Object.freeze(['@cf/black-forest-labs/flux-1-schnell']),
+    // flux-1-schnell is fixed at 1024x1024; the model card exposes no width/height input.
+    sizes: Object.freeze(['1024x1024']),
+    quality: false,
+    maxPrompt: 2048,
+    billing: 'free-tier',
+  }),
 });
 export const IMAGE_GENERATION_MODELS = Object.freeze(
   Object.values(IMAGE_GENERATION_PROVIDERS).flatMap((provider) => provider.models),
