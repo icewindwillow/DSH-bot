@@ -22,12 +22,24 @@ function png(size = '1024x1024') {
   PNGS.set(size, output); return output;
 }
 function reply(bytes = png()) { return new Response(JSON.stringify({ data: [{ b64_json: bytes.toString('base64') }] }), { status: 200 }); }
+function jpeg(width, height) {
+  const comment = Buffer.alloc(32); comment[0] = 0xff; comment[1] = 0xfe; comment.writeUInt16BE(30, 2);
+  const sof = Buffer.alloc(19); sof[0] = 0xff; sof[1] = 0xc0; sof.writeUInt16BE(17, 2); sof[4] = 8;
+  sof.writeUInt16BE(height, 5); sof.writeUInt16BE(width, 7); sof[9] = 3;
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), comment, sof, Buffer.from([0xff, 0xd9])]);
+}
+const siliconflow = (url) => new Response(JSON.stringify({ images: [{ url }] }), { status: 200 });
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
 function fixture(t, options = {}) {
   const prefix = join(realpathSync(tmpdir()), 'dsh-image-test-');
   const root = mkdtempSync(prefix), profile = join(root, 'private-profile'); mkdirSync(profile, { mode: 0o700 });
-  const old = { profile: process.env.QQBOT_PROFILE_DIR, key: process.env.OPENAI_API_KEY, kill: process.env.QQBOT_IMAGE_GENERATION, home: process.env.HOME, fetch: globalThis.fetch, now: Date.now };
-  process.env.QQBOT_PROFILE_DIR = profile; process.env.OPENAI_API_KEY = 'synthetic-image-credential'; delete process.env.QQBOT_IMAGE_GENERATION; process.env.HOME = root;
+  const old = {
+    profile: process.env.QQBOT_PROFILE_DIR, key: process.env.OPENAI_API_KEY, sfKey: process.env.SILICONFLOW_API_KEY,
+    kill: process.env.QQBOT_IMAGE_GENERATION, home: process.env.HOME, fetch: globalThis.fetch, now: Date.now,
+  };
+  process.env.QQBOT_PROFILE_DIR = profile; process.env.OPENAI_API_KEY = 'synthetic-image-credential';
+  process.env.SILICONFLOW_API_KEY = 'synthetic-siliconflow-credential';
+  delete process.env.QQBOT_IMAGE_GENERATION; process.env.HOME = root;
   let settings = { ...IMAGE_GENERATION_DEFAULTS, enabled: true, ...options.settings };
   const save = (next) => { settings = { ...settings, ...next }; writeFileSync(join(profile, 'qqbot-image-generation.json'), JSON.stringify(settings), { mode: 0o600 }); };
   save({});
@@ -69,7 +81,7 @@ function fixture(t, options = {}) {
   const run = (args = { prompt: '一只看星星的鲸鱼' }, context = primary.exec) => tools.get('generate_image').execute(args, context);
   t.after(() => {
     events.get('dispose')?.(); globalThis.fetch = old.fetch; Date.now = old.now;
-    for (const [key, value] of [['QQBOT_PROFILE_DIR', old.profile], ['OPENAI_API_KEY', old.key], ['QQBOT_IMAGE_GENERATION', old.kill], ['HOME', old.home]]) {
+    for (const [key, value] of [['QQBOT_PROFILE_DIR', old.profile], ['OPENAI_API_KEY', old.key], ['SILICONFLOW_API_KEY', old.sfKey], ['QQBOT_IMAGE_GENERATION', old.kill], ['HOME', old.home]]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     assert.ok(root.startsWith(prefix)); assert.equal(realpathSync(root), root); rmSync(root, { recursive: true, force: true });
@@ -84,7 +96,8 @@ test('image defaults and all supported settings agree with the panel and public 
   assert.deepEqual(lib.defaults, IMAGE_GENERATION_DEFAULTS);
   const template = JSON.parse(readFileSync(new URL('../examples/profile/qqbot-image-generation.json', import.meta.url)));
   assert.deepEqual(template, IMAGE_GENERATION_DEFAULTS);
-  for (const model of lib.models) for (const size of ['1024x1024', '1536x1024', '1024x1536']) for (const quality of ['low', 'medium', 'high']) {
+  const sizesFor = (model) => model === 'Kwai-Kolors/Kolors' ? ['1024x1024', '960x1280', '768x1024'] : ['1024x1024', '1536x1024', '1024x1536'];
+  for (const model of lib.models) for (const size of sizesFor(model)) for (const quality of ['low', 'medium', 'high']) {
     const settings = { ...IMAGE_GENERATION_DEFAULTS, model, size, quality };
     validateImageGenerationSettings(settings); f.save(settings); assert.deepEqual(lib.read(f.profile), settings);
   }
@@ -268,4 +281,60 @@ test('configuration and output symlinks fail before paid requests; no external f
   assert.equal((await f.run()).status, 'storage_failed'); assert.equal(f.requests.length, 0); assert.equal(readFileSync(sentinel, 'utf8'), 'synthetic-preserve');
   writeFileSync(join(f.profile, 'qqbot-image-generation.json'), '{synthetic-sensitive-invalid');
   const output = await f.run(); assert.equal(output.status, 'configuration_error'); assert.ok(!JSON.stringify(output).includes('synthetic-sensitive')); assert.equal(f.requests.length, 0);
+});
+
+test('siliconflow Kolors posts image_size only, downloads the returned https image once and sends it', async (t) => {
+  const f = fixture(t, { settings: { model: 'Kwai-Kolors/Kolors', size: '960x1280' } });
+  const image = jpeg(960, 1280);
+  f.respond(async (url) => String(url).includes('api.siliconflow.cn')
+    ? siliconflow('https://cdn.example.com/out.jpg')
+    : new Response(image, { status: 200, headers: { 'content-type': 'image/jpeg' } }));
+  const output = await f.run();
+  assert.equal(output.status, 'sent');
+  const [api, download] = f.requests;
+  assert.equal(api.url, 'https://api.siliconflow.cn/v1/images/generations');
+  assert.equal(api.method, 'POST'); assert.equal(api.redirect, 'error');
+  assert.equal(api.headers.authorization, 'Bearer synthetic-siliconflow-credential');
+  assert.deepEqual(JSON.parse(api.body), { model: 'Kwai-Kolors/Kolors', prompt: '一只看星星的鲸鱼', image_size: '960x1280' });
+  assert.equal(download.url, 'https://cdn.example.com/out.jpg'); assert.equal(download.method, 'GET');
+  assert.deepEqual(f.sent[0].bytes, image); assert.ok(f.sent[0].file.endsWith('image.jpg'));
+  assert.equal(existsSync(f.sent[0].file), false); noArtifacts(f);
+  assert.ok(!JSON.stringify(output).includes('synthetic-siliconflow-credential'));
+});
+
+test('siliconflow result URLs must be https, public and real images; nothing is written or sent', async (t) => {
+  const cases = [
+    ['http://cdn.example.com/a.png', null],
+    ['https://127.0.0.1/a.png', null],
+    ['https://localhost/a.png', null],
+    ['https://10.0.0.8/a.png', null],
+    ['https://192.168.1.9/a.png', null],
+    ['https://[::1]/a.png', null],
+    ['https://cdn.example.com/a.jpg', Buffer.from('synthetic-not-an-image-payload-at-all-0123456789')],
+    ['https://cdn.example.com/a.jpg', jpeg(1024, 1024)],
+  ];
+  for (const [url, bytes] of cases) {
+    const f = fixture(t, { settings: { model: 'Kwai-Kolors/Kolors', size: '960x1280' } });
+    f.respond(async (target) => String(target).includes('api.siliconflow.cn')
+      ? siliconflow(url)
+      : new Response(bytes, { status: 200 }));
+    const output = await f.run();
+    assert.equal(output.ok, false, url);
+    assert.equal(f.sent.length, 0, url);
+    // Unsafe addresses are rejected before any download attempt; valid ones may be fetched but never sent.
+    if (!bytes) assert.equal(f.requests.some((request) => request.url === url), false, url);
+    noArtifacts(f);
+  }
+});
+
+test('siliconflow and OpenAI credentials are not interchangeable', async (t) => {
+  const f = fixture(t, { settings: { model: 'Kwai-Kolors/Kolors' } });
+  delete process.env.SILICONFLOW_API_KEY;
+  assert.equal((await f.run()).status, 'missing_key');
+  assert.equal(f.requests.length, 0); noArtifacts(f);
+  process.env.SILICONFLOW_API_KEY = 'synthetic-siliconflow-credential';
+  f.save({ model: 'gpt-image-2' });
+  delete process.env.OPENAI_API_KEY;
+  assert.equal((await f.run()).status, 'missing_key');
+  assert.equal(f.requests.length, 0); noArtifacts(f);
 });

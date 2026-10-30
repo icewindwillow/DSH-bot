@@ -15,8 +15,37 @@ export const IMAGE_GENERATION_DEFAULTS = Object.freeze({
   maxPerHour: 3,
   timeoutSeconds: 180,
 });
-const MODELS = new Set(['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini']);
-const SIZES = new Set(['1024x1024', '1536x1024', '1024x1536']);
+// The provider is derived from the whitelisted model id, never from a configurable URL.
+// Adding a provider here is the only way to change where a paid or free request may go.
+export const IMAGE_GENERATION_PROVIDERS = Object.freeze({
+  openai: Object.freeze({
+    label: 'OpenAI',
+    credential: 'OPENAI_API_KEY',
+    endpoint: 'https://api.openai.com/v1/images/generations',
+    models: Object.freeze(['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini']),
+    sizes: Object.freeze(['1024x1024', '1536x1024', '1024x1536']),
+    quality: true,
+    billing: 'paid',
+  }),
+  siliconflow: Object.freeze({
+    label: '硅基流动',
+    credential: 'SILICONFLOW_API_KEY',
+    endpoint: 'https://api.siliconflow.cn/v1/images/generations',
+    models: Object.freeze(['Kwai-Kolors/Kolors']),
+    sizes: Object.freeze(['1024x1024', '960x1280', '768x1024']),
+    quality: false,
+    billing: 'free',
+  }),
+});
+export const IMAGE_GENERATION_MODELS = Object.freeze(
+  Object.values(IMAGE_GENERATION_PROVIDERS).flatMap((provider) => provider.models),
+);
+export function imageGenerationProvider(model) {
+  for (const [name, provider] of Object.entries(IMAGE_GENERATION_PROVIDERS))
+    if (provider.models.includes(model)) return { name, ...provider };
+  return undefined;
+}
+const MODELS = new Set(IMAGE_GENERATION_MODELS);
 const QUALITIES = new Set(['low', 'medium', 'high']);
 const FIELDS = Object.keys(IMAGE_GENERATION_DEFAULTS);
 const FILE_NAME = 'qqbot-image-generation.json';
@@ -45,7 +74,8 @@ export function validateImageGenerationSettings(value) {
     fail('生图配置必须包含且仅包含规定的完整字段');
   if (typeof value.enabled !== 'boolean') fail('生图启用状态必须为布尔值');
   if (!MODELS.has(value.model)) fail('不支持的生图模型');
-  if (!SIZES.has(value.size)) fail('不支持的图片尺寸');
+  if (!imageGenerationProvider(value.model).sizes.includes(value.size))
+    fail(`该模型不支持的图片尺寸；可选 ${imageGenerationProvider(value.model).sizes.join(' / ')}`);
   if (!QUALITIES.has(value.quality)) fail('不支持的图片质量');
   for (const [field, min, max] of [['cooldownSeconds', 60, 3600], ['maxPerHour', 1, 10], ['timeoutSeconds', 30, 300]]) {
     if (!Number.isInteger(value[field]) || value[field] < min || value[field] > max)

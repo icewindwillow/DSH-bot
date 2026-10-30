@@ -382,23 +382,28 @@
     </form>
     <form id="imageGenerationForm" autocomplete="off">
       <div class="card">
-        <h2>OpenAI 生图（默认关闭）</h2>
-        <div class="alert warn">生图可能按 OpenAI 官方规则计费，复用上方 <span class="kbd">OPENAI_API_KEY</span>。保存 Key 不会自动启用生图，空白或缺失 Key 不会发起生图请求。</div>
-        <p class="hint">仅用于用户明确提出的画图请求，每次单张，不自动重试。只发送本轮新 prompt，不附带群历史或参考图。固定使用 <span class="kbd">https://api.openai.com/v1/images/generations</span>，不经过自定义聊天网关，也不接受自定义接口 URL。</p>
-        <p class="hint">生图设置保存后动态生效，无需重启；新填或更换 OpenAI Key 仍需重启机器人，才能加载进启动环境。保存设置和刷新状态不会调用付费接口或验证模型权限。</p>
+        <h2>生图（默认关闭）</h2>
+        <div class="alert warn">是否计费取决于所选模型：OpenAI 按官方规则计费，复用上方 <span class="kbd">OPENAI_API_KEY</span>；硅基流动 <span class="kbd">Kwai-Kolors/Kolors</span> 当前为免费模型，复用 <span class="kbd">SILICONFLOW_API_KEY</span>。保存 Key 不会自动启用生图，空白或缺失 Key 不会发起生图请求。</div>
+        <p class="hint">仅用于用户明确提出的画图请求，每次单张，不自动重试。只发送本轮新 prompt，不附带群历史或参考图。请求固定发往所选模型对应的官方接口（OpenAI <span class="kbd">api.openai.com/v1/images/generations</span>，硅基流动 <span class="kbd">api.siliconflow.cn/v1/images/generations</span>），不经过自定义聊天网关，也不接受自定义接口 URL。</p>
+        <p class="hint">硅基流动返回 1 小时有效的图片链接，工具只下载一次并校验 PNG/JPEG 后发送；其免费模型默认带「AI 生成」水印。生图设置保存后动态生效，无需重启；新填或更换 Key 仍需重启机器人，才能加载进启动环境。保存设置和刷新状态不会调用生图接口或验证模型权限。</p>
         <fieldset id="imageGenerationFields" disabled style="border:0;padding:0;margin:0">
           <legend class="muted">频率限制按每个会话单独计算</legend>
-          <label><input type="checkbox" id="imageEnabled" /> 显式启用 OpenAI 生图</label>
+          <label><input type="checkbox" id="imageEnabled" /> 显式启用生图</label>
           <div class="grid">
             <div class="field"><label for="imageModel">生图模型</label><select id="imageModel">
-              <option value="gpt-image-2">gpt-image-2</option>
-              <option value="gpt-image-2.5-flare">gpt-image-2.5-flare</option>
-              <option value="gpt-image-2.5-sunburst">gpt-image-2.5-sunburst</option>
-              <option value="gpt-image-1.5">gpt-image-1.5</option>
-              <option value="gpt-image-1-mini">gpt-image-1-mini</option>
+              <optgroup label="OpenAI（付费）">
+                <option value="gpt-image-2">gpt-image-2</option>
+                <option value="gpt-image-2.5-flare">gpt-image-2.5-flare</option>
+                <option value="gpt-image-2.5-sunburst">gpt-image-2.5-sunburst</option>
+                <option value="gpt-image-1.5">gpt-image-1.5</option>
+                <option value="gpt-image-1-mini">gpt-image-1-mini</option>
+              </optgroup>
+              <optgroup label="硅基流动（免费）">
+                <option value="Kwai-Kolors/Kolors">Kwai-Kolors/Kolors</option>
+              </optgroup>
             </select></div>
-            <div class="field"><label for="imageSize">尺寸</label><select id="imageSize"><option value="1024x1024">1024 × 1024（方形）</option><option value="1536x1024">1536 × 1024（横向）</option><option value="1024x1536">1024 × 1536（纵向）</option></select></div>
-            <div class="field"><label for="imageQuality">质量</label><select id="imageQuality"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
+            <div class="field"><label for="imageSize">尺寸</label><select id="imageSize"><option value="1024x1024">1024 × 1024（方形）</option><option value="1536x1024">1536 × 1024（横向）</option><option value="1024x1536">1024 × 1536（纵向）</option><option value="960x1280">960 × 1280（竖版，硅基流动）</option><option value="768x1024">768 × 1024（竖版，硅基流动）</option></select></div>
+            <div class="field"><label for="imageQuality">质量（仅 OpenAI）</label><select id="imageQuality"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
             <div class="field"><label for="imageCooldown">每会话冷却（秒，60–3600）</label><input type="number" id="imageCooldown" min="60" max="3600" step="1" required value="120" /></div>
             <div class="field"><label for="imageMaxPerHour">每会话每小时上限（1–10）</label><input type="number" id="imageMaxPerHour" min="1" max="10" step="1" required value="3" /></div>
             <div class="field"><label for="imageTimeout">请求超时（秒，30–300）</label><input type="number" id="imageTimeout" min="30" max="300" step="1" required value="180" /></div>
@@ -856,7 +861,8 @@ async function saveModel(opts = {}) {
 const credentialFields = [
   { key: 'QQBOT_APPID', title: 'QQ 机器人 AppID', hint: '从 QQ 开放平台机器人管理页获取。', qq: true, type: 'text' },
   { key: 'QQBOT_SECRET', title: 'QQ 机器人密钥', hint: '机器人 Client Secret，不是个人 QQ 密码。', qq: true },
-  { key: 'OPENAI_API_KEY', title: 'OpenAI', hint: 'OpenAI 官方聊天与已接入的相关功能；按官方 API 计费。' },
+  { key: 'OPENAI_API_KEY', title: 'OpenAI', hint: 'OpenAI 官方聊天与生图；按官方 API 计费。' },
+  { key: 'SILICONFLOW_API_KEY', title: '硅基流动（可选，免费生图）', hint: '用于 Kwai-Kolors/Kolors 免费生图；需在硅基流动控制台完成实名认证后创建 Key。' },
   { key: 'DEEPSEEK_API_KEY', title: 'DeepSeek', hint: 'DeepSeek API 路由及相关搜索/读取功能，是否需要取决于当前配置。' },
   { key: 'XIANGXIN_API_KEY', title: '象信 AI（判断模型，推荐）', hint: '先用它做回复 / 记忆门控与分类，主模型只处理值得回的消息，可大幅节省 Token。' },
   { key: 'OPENCODE_GO_API_KEY', title: 'OpenCode Go（可选）', hint: '现有部分辅助判断或对应模型路由可能依赖，不是免费模型通行证。' },
@@ -975,7 +981,14 @@ const imageGenerationControls = {
   enabled: 'imageEnabled', model: 'imageModel', size: 'imageSize', quality: 'imageQuality',
   cooldownSeconds: 'imageCooldown', maxPerHour: 'imageMaxPerHour', timeoutSeconds: 'imageTimeout',
 };
-const imageGenerationModels = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini'];
+const imageGenerationModels = ['gpt-image-2', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-1.5', 'gpt-image-1-mini', 'Kwai-Kolors/Kolors'];
+const imageGenerationFreeModels = ['Kwai-Kolors/Kolors'];
+const imageGenerationSizes = {
+  openai: ['1024x1024', '1536x1024', '1024x1536'],
+  siliconflow: ['1024x1024', '960x1280', '768x1024'],
+};
+const imageGenerationProviderOf = (model) => imageGenerationFreeModels.includes(model) ? 'siliconflow' : 'openai';
+const imageGenerationSizesFor = (model) => imageGenerationSizes[imageGenerationProviderOf(model)];
 let imageGenerationLoaded = false;
 let imageGenerationBusy = false;
 let imageGenerationDirty = false;
@@ -990,7 +1003,7 @@ function validateImageGenerationDraft(settings) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)
     || Object.keys(settings).length !== fields.length || fields.some((key) => !Object.hasOwn(settings, key))
     || typeof settings.enabled !== 'boolean' || !imageGenerationModels.includes(settings.model)
-    || !['1024x1024', '1536x1024', '1024x1536'].includes(settings.size)
+    || !imageGenerationSizesFor(settings.model).includes(settings.size)
     || !['low', 'medium', 'high'].includes(settings.quality)) throw new Error('Invalid image settings');
   for (const [key, min, max] of [['cooldownSeconds', 60, 3600], ['maxPerHour', 1, 10], ['timeoutSeconds', 30, 300]]) {
     if (!Number.isInteger(settings[key]) || settings[key] < min || settings[key] > max) throw new Error('Invalid image limits');
@@ -1003,6 +1016,7 @@ function showImageGenerationSettings(settings) {
     if (key === 'enabled') $(id).checked = settings.enabled;
     else $(id).value = String(settings[key]);
   }
+  $('imageQuality').disabled = imageGenerationProviderOf(settings.model) !== 'openai';
   imageGenerationSavedEnabled = settings.enabled;
   imageGenerationDirty = false;
   imageGenerationLoaded = true;
@@ -1032,7 +1046,7 @@ async function saveImageGenerationSettings(event) {
   }
   try { validateImageGenerationDraft(settings); }
   catch { $('imageGenerationMsg').className = 'msg err'; $('imageGenerationMsg').textContent = '请检查生图枚举选项和整数范围。'; return; }
-  if (settings.enabled && !imageGenerationSavedEnabled && !confirm('启用后，仅明确画图请求可向 OpenAI 发送本轮新 prompt 并产生费用；不附带群历史，每次单张且不自动重试。确认启用？')) return;
+  if (settings.enabled && !imageGenerationSavedEnabled && !confirm('启用后，仅明确画图请求可向所选图片服务发送本轮新 prompt 并产生费用（硅基流动 Kolors 当前为免费模型）；不附带群历史，每次单张且不自动重试。确认启用？')) return;
   imageGenerationBusy = true; updateImageGenerationControls();
   $('imageGenerationMsg').className = 'msg';
   $('imageGenerationMsg').textContent = '保存生图设置中（不会生成图片）…';
@@ -1052,6 +1066,11 @@ for (const id of Object.values(imageGenerationControls)) {
   $(id).oninput = mark;
   $(id).onchange = mark;
 }
+$('imageModel').onchange = () => {
+  const allowed = imageGenerationSizesFor($('imageModel').value);
+  if (!allowed.includes($('imageSize').value)) $('imageSize').value = allowed[0];
+  $('imageQuality').disabled = imageGenerationProviderOf($('imageModel').value) !== 'openai';
+};
 $('imageGenerationForm').onsubmit = saveImageGenerationSettings;
 $('btnReloadImageGeneration').onclick = () => {
   if (imageGenerationDirty && !confirm('刷新会丢弃未保存的生图设置，继续？')) return;

@@ -1,22 +1,22 @@
-# OpenAI 生图：明确请求、单张回传、默认关闭
+# 生图：明确请求、单张回传、默认关闭
 
 [返回首页](<../README.md>) · [配置](<configuration.md>) · [隐私](<privacy.md>) · [排错](<troubleshooting.md#生图没有触发或没有收到图片>)
 
-`generate_image` 用 OpenAI 官方图片接口生成一张 PNG，再通过 QQ 图片接口发回**当前会话**。它与识图、网络搜图、图库和已有图片发送是不同能力。
+`generate_image` 用管理员选定的图片接口生成一张图片，再通过 QQ 图片接口发回**当前会话**。目前支持 OpenAI 官方接口（付费）和硅基流动 `Kwai-Kolors/Kolors`（当前免费）；它与识图、网络搜图、图库和已有图片发送是不同能力。
 
-**生图默认关闭，而且通常收费。** 聊天模型不必切到 OpenAI：可以用 DeepSeek 或 Our Free Model 聊天，同时单独使用自己的 `OPENAI_API_KEY` 生图。免费聊天不等于免费生图。
+**生图默认关闭。** 聊天模型不必切到 OpenAI：可以用 DeepSeek 或 Our Free Model 聊天，同时单独使用自己的图片 Key。费用取决于所选模型：OpenAI 按官方规则计费，硅基流动 Kolors 当前免费；免费聊天不等于免费生图，免费模型也不保证长期免费。
 
 当前接线范围是 `@tencent-connect/dsh-qqbot` **0.5.2 的群聊（group）与 C2C**；不宣称支持 QQ 频道或 dm。
 
 ## 先用面板配置
 
 1. 按[部署指南](<deployment.md>)建立独立测试 profile，并完整部署当前补丁。已有 profile 可先 `npm run init` 预览，再 `npm run init -- --apply` 补缺失模板；初始化不覆盖现有设置。
-2. 运行 `npm run panel`，打开终端打印的本机地址，在“API 密钥 / QQ 连接”中保存自己的 `OPENAI_API_KEY`。不要在群消息、命令示例或截图中贴 Key。
-3. 在同一页下方找到“OpenAI 生图”，检查模型、尺寸、质量、冷却和次数限制，主动勾选启用并确认费用提示。**填写 Key 不会自动启用生图；空白 Key 也不会自动启用或发起请求。**
+2. 运行 `npm run panel`，打开终端打印的本机地址，在“API 密钥 / QQ 连接”中保存图片服务的 Key：OpenAI 用 `OPENAI_API_KEY`，硅基流动用 `SILICONFLOW_API_KEY`（需先在硅基流动控制台完成实名认证再创建 Key）。不要在群消息、命令示例或截图中贴 Key。
+3. 在同一页下方找到“生图”，检查模型、尺寸、质量、冷却和次数限制，主动勾选启用并确认费用提示。模型决定服务商与接口：选 `gpt-image-*` 走 OpenAI，选 `Kwai-Kolors/Kolors` 走硅基流动。**填写 Key 不会自动启用生图；空白 Key 也不会自动启用或发起请求。**
 4. 新填或更换 Key 后，先停止旧机器人，再在相同 profile 环境中运行 `npm run bot`。启动器把本地凭据加载进进程环境；只改生图设置时无需重启，下一次调用动态读取。
 
 Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/.dsh/.credentials.yaml`。由 launchd 等进程管理器直接启动、不经过 `npm run bot` 的实例，可用 DSH 凭据文件中的 Key；此时面板保存的 `.bot-secrets.json` 不会被该实例加载，需在对应启动环境或 DSH 凭据里配置。
-5. 在自己获授权的测试群中发送明确请求，自己承担并核对该次真实 API 费用。
+5. 在自己获授权的测试群中发送明确请求，自己承担并核对该次真实 API 费用（免费模型也请核对服务商的最新条款）。
 
 推荐写法：
 
@@ -27,6 +27,17 @@ Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/
 “帮我画一只看星星的鲸鱼”等自然表达也会保守识别，但不是开放式意图猜测。识别不了时，重新发送明确的 `/生图 描述`，不要通过让模型绕过权限检查解决。
 
 面板的刷新、保存和 Key 状态查询**不生成图片、不请求付费接口，也不验证账号额度或模型权限**。填了 Key 或看到保存成功，不代表真实调用已经可用。
+
+## 想先零成本试：硅基流动免费模型
+
+在[硅基流动控制台](https://cloud.siliconflow.cn/)创建 `SILICONFLOW_API_KEY`（需按其要求完成实名认证），在面板生图设置里把模型选为 `Kwai-Kolors/Kolors`，尺寸可选 `1024x1024` / `960x1280` / `768x1024`。它是本工具唯一的免费图片模型：
+
+- `quality` 对它不生效，只对 OpenAI 模型有效。
+- 免费模型通常带「AI 生成」水印；免费额度、限流、内容规则和是否长期免费都以上游为准，本项目不承诺永久免费。
+- 它返回 1 小时有效的图片链接，工具只下载一次并校验 PNG/JPEG 后发送，不会把链接转给聊天模型。
+- 与 OpenAI 的 Key 不通用：选 Kolors 时读 `SILICONFLOW_API_KEY`，选 GPT Image 时读 `OPENAI_API_KEY`。
+
+这条路径未在本仓库做真实付费/免费调用验收；首次使用请自己确认上游条款、额度和实际效果。
 
 ## 独立配置与精确默认值
 
@@ -47,16 +58,16 @@ Key 的读取顺序：进程环境 `OPENAI_API_KEY` → DSH 凭据服务 → `~/
 | 字段 | 允许值 / 范围 | 作用 |
 | --- | --- | --- |
 | `enabled` | 严格布尔值，默认 `false` | 必须显式启用；不是字符串 `"true"` |
-| `model` | `gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-1.5`、`gpt-image-1-mini` | 白名单，不接受任意模型名；默认 `gpt-image-2` |
-| `size` | `1024x1024`、`1536x1024`、`1024x1536` | 默认方形；这是工具的保守限制，不是 OpenAI API 的最大能力声明 |
-| `quality` | `low`、`medium`、`high` | 默认 `low`；不同选择可能改变费用与耗时 |
+| `model` | `gpt-image-2`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-1.5`、`gpt-image-1-mini`、`Kwai-Kolors/Kolors` | 白名单，不接受任意模型名；默认 `gpt-image-2`。模型同时决定服务商、接口地址与凭据 |
+| `size` | OpenAI：`1024x1024`、`1536x1024`、`1024x1536`；Kolors：`1024x1024`、`960x1280`、`768x1024` | 默认方形；这是工具的保守限制，不是服务商 API 的最大能力声明 |
+| `quality` | `low`、`medium`、`high` | 默认 `low`；仅对 OpenAI 生效，Kolors 忽略该项 |
 | `cooldownSeconds` | 整数 `60..3600` | 每会话两次尝试之间的冷却，默认 `120` 秒 |
 | `maxPerHour` | 整数 `1..10` | 每会话每小时尝试上限，默认 `3` |
 | `timeoutSeconds` | 整数 `30..300` | API 请求及响应体读取超时，默认 `180` 秒 |
 
 字段必须**完整且恰好是这七项**；缺字段、未知字段、字符串数字、非法枚举都会被拒绝。配置文件上限 16 KiB；面板使用原子替换、`0600` 文件权限写入，并拒绝祖先/目标符号链接及目标硬链接。缺文件按关闭状态的默认值处理；损坏文件不是隐式启用的理由。
 
-`gpt-image-1` 已下线，本工具不接受它，也不支持 DALL·E。模型白名单不保证你的账号拥有全部模型权限或余额，调用时仍受 OpenAI 规则约束。
+`gpt-image-1` 已下线，本工具不接受它，也不支持 DALL·E。模型白名单不保证你的账号拥有全部模型权限、余额或免费额度；调用时仍受对应服务商规则约束。免费模型可能限流或调整价格，本工具不承诺长期免费。
 
 ### 紧急禁止
 
@@ -81,14 +92,16 @@ export QQBOT_IMAGE_GENERATION=off
 
 因此不支持靠“照上次的要求再做”“引用之前那条”来自动付费；请在当前消息里重新写完整、明确的请求。**群聊仍需按现有门控明确 @，推荐 `/生图 描述`。** 守卫是保守的程序限制，不是对任意自然语言都能正确判意的承诺。
 
-## 发送给 OpenAI 的内容
+## 发送给图片服务的内容
 
-固定请求为官方 `POST https://api.openai.com/v1/images/generations`：
+请求地址由所选模型唯一决定，没有可配置的 endpoint：
 
-- 一次 `n:1`，`output_format:png`；只接受响应中的 `b64_json`。
+- OpenAI：`POST https://api.openai.com/v1/images/generations`，`n:1`、`output_format:png`，只接受响应中的 `b64_json`。
+- 硅基流动：`POST https://api.siliconflow.cn/v1/images/generations`，发送 `model`、`prompt`、`image_size`；响应返回 1 小时有效的图片 URL，工具只下载该 URL 一次，且必须为 https、非内网地址、不超过 8 MiB，再按 PNG/JPEG 魔数校验。
 - 工具 prompt 为 `1..4000` 字且不超过 16 KiB，只发送本次新 prompt 及模型/尺寸/质量等必要参数。
-- 不自动附带群历史、参考图片、人设、记忆或聊天附件；**prompt 自己若含隐私，它仍会发给 OpenAI**。
+- 不自动附带群历史、参考图片、人设、记忆或聊天附件；**prompt 自己若含隐私，它仍会发给对应服务商**。
 - 不接受自定义 URL，不经过自定义聊天网关；没有参考图、编辑、批量生成、付费后端回退或生图自动重试。
+- 免费模型默认带「AI 生成」水印（服务商默认行为，本工具不关闭），这也符合生成式 AI 内容标识的要求。
 
 聊天服务商与图片服务商可以不同。主聊天模型仍可能按原有会话流程看到消息；“生图不附历史”不是对整条聊天链路无上下文外发的保证。
 
@@ -104,7 +117,7 @@ API 的 fetch 和读取响应体受配置的超时及取消信号约束。但 QQ
 
 生成结果只落在所选 profile 的私有 `generated-images/request-*` 路径，目录 `0700`、文件 `0600`。模块不把图片加入图库，不另存 prompt；发送完成或失败后，在 `finally` 中立即尽力删除临时文件。
 
-输入限制为**解码后图片最多 8 MiB、响应最多 12 MiB**。校验涵盖 base64、PNG 头、尺寸、IEND 与大小；这不是完整图像解码、完整格式安全审计或内容安全审核。
+输入限制为**解码后图片最多 8 MiB、响应最多 12 MiB**。校验涵盖 base64（OpenAI）、PNG/JPEG 魔数与尺寸、PNG 的 IEND / JPEG 的 EOI 与大小；这不是完整图像解码、完整格式安全审计或内容安全审核。OpenAI 要求返回尺寸与请求完全一致；硅基流动只要求长边不超过 4096、宽高比与请求相差不超过 5%。
 
 崩溃、强制终止、权限错误或磁盘问题仍可能留下残留文件，需由管理员在确认没有在途发送后检查清理。不要把 `generated-images`、日志或任何临时图片提交 Git。清理本机副本不意味着 QQ、OpenAI、聊天服务商或成员客户端的副本也被删除。
 
@@ -116,5 +129,6 @@ API 的 fetch 和读取响应体受配置的超时及取消信号约束。但 QQ
 
 - [OpenAI 官方图片生成指南](https://developers.openai.com/api/docs/guides/image-generation)
 - [OpenAI 官方 Images Generate API 参考](https://developers.openai.com/api/reference/resources/images/methods/generate)
+- [硅基流动创建图片生成请求](https://docs.siliconflow.cn/docs/api/images-generations-post)
 
 官方能力、价格、条款与可用模型会变化。本工具只开放上述受限子集，不通过扩宽 URL、移除限流或猜测模型名来绕过限制。

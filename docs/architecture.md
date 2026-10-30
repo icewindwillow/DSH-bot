@@ -15,7 +15,7 @@ QQ 平台
   ├─ 记忆门控 / 可选语义检索
   ├─ 关系、心情、事件、可选日记
   ├─ 媒体归档 / 搜图 / 收藏
-  ├─ 可选 OpenAI 单张生图 / 当前 QQ group或C2C 回传
+  ├─ 可选单张生图（OpenAI 或硅基流动）/ 当前 QQ group或C2C 回传
   └─ 模型路由感知的搜索与网页读取
   ↕
 DSH 服务与插件（LLM、LTM、工具、调度等）
@@ -70,11 +70,11 @@ DSH 服务与插件（LLM、LTM、工具、调度等）
 
 ### 生图：固定后端与本轮授权
 
-生图不跟随聊天 provider；DeepSeek/免费聊天也可单独调用 OpenAI 官方图片 API，复用 `OPENAI_API_KEY`。它默认关闭，由独立 JSON 配置下一调用动态控制，`QQBOT_IMAGE_GENERATION=off` 还可额外禁止，`on` 不会覆盖 JSON 关闭状态。面板仅保存设置，新的 Key 仍靠启动器重启后注入环境。
+生图不跟随聊天 provider；DeepSeek/免费聊天也可单独调用图片 API。模型白名单同时决定服务商、接口地址与凭据（`gpt-image-*` → `OPENAI_API_KEY`，`Kwai-Kolors/Kolors` → `SILICONFLOW_API_KEY`）。它默认关闭，由独立 JSON 配置下一调用动态控制，`QQBOT_IMAGE_GENERATION=off` 还可额外禁止，`on` 不会覆盖 JSON 关闭状态。面板仅保存设置，新的 Key 仍靠启动器重启后注入环境。
 
 1. **入站只认原始当前事件。** 使用 `msg.raw.content`，核对原始/规范化消息 ID、作者和群 scope，不取合并消息、引用、历史或 ASR。保守识别明确画图请求，绑定 `stableUserMessageId`、根执行 agent 会话、group/C2C 与原消息 ID；轮次/会话事件撤销授权。自然语言正则不是完整 NLP 语义保证，推荐群 @ 后 `/生图 描述`。
 2. **执行守卫与次数限制。** 只接受本轮授权执行，不允许后台、无执行 agent 或跨群调用。每会话冷却/小时上限加进程每小时 10 次硬限制、最多一张在途；失败/取消/不确定 API 尝试计数。内存状态重启清零，不是金额预算。
-3. **最小固定请求。** 官方 `POST /v1/images/generations`，`n:1`、PNG、只读 `b64_json`，只发本次新 prompt。没有 URL/聊天网关、参考图/编辑、批量、付费回退或生图自动重试；请求与读 body 受超时及取消信号约束。
+3. **最小固定请求。** OpenAI 走 `POST /v1/images/generations`（`n:1`、PNG、只读 `b64_json`），硅基流动走 `POST /v1/images/generations`（`image_size`，返回 1 小时有效的 https 图片链接，只下载一次并校验）。只发本次新 prompt；没有自定义 endpoint、聊天网关、参考图/编辑、批量、付费回退或生图自动重试；请求与读 body 受超时及取消信号约束。
 4. **私有暂存与原会话发送。** 校验 base64、PNG 头/尺寸/IEND 和大小，不是完整解码；图片/响应上限分别为 8/12 MiB。图片写入私有 profile 的 `generated-images/request-*`，不入图库、不另存 prompt。发送前再次核对原消息 ID、记录与授权，使用原始 bot 回传，不能由媒体 sender 自动换 ID 或主动推送。
 5. **以 QQ 确认为准。** 只有非空 `message.id` 且无失败字段才认定回传成功；否则不声称已发送。QQ SDK 发送没有 AbortSignal，开始后不可保证取消或撤回；等待发送结果再在 finally 尽力清理，不用 Promise.race 提前删图。崩溃/权限错误可能残留，第三方副本不由本机清理保证。
 

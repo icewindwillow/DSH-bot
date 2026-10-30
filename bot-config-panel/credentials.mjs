@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export const CREDENTIAL_KEYS = Object.freeze([
-  'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY',
+  'OPENAI_API_KEY', 'SILICONFLOW_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY',
   'OPENCODE_GO_API_KEY', 'QQBOT_APPID', 'QQBOT_SECRET',
 ]);
 const ALLOWED = new Set(CREDENTIAL_KEYS);
