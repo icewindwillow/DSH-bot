@@ -6,7 +6,7 @@
 
 不要在真实机器人 profile 里做破坏性试验。创建独立测试 profile，使用虚构的群、成员和消息，并在每个终端显式检查 `QQBOT_PROFILE_DIR`。默认长期记忆可能全局共享，测试 profile 不是自动隔离箱；需要测试存储时同时隔离 DSH 数据根并核对各模块路径。
 
-本地观察基线为 DSH 0.2.1-rc.3 / QQ 0.5.2 / LTM 0.3.4；macOS 下 Node 24.22.2 与 25.8.1 均已通过 88/88 离线回归。[CI 矩阵](<../.github/workflows/ci.yml>)已配置 Node 24/25 × Ubuntu/macOS，待推送远端执行，不宣称 Linux 已通过。
+本地观察基线为 DSH 0.2.1-rc.3 / QQ 0.5.2 / LTM 0.3.4；macOS 下 Node 24.22.2 与 25.8.1 均已通过 88/88 离线回归。[CI 矩阵](<../.github/workflows/ci.yml>)已在首轮远端运行中通过 Node 24/25 × Ubuntu/macOS 四组检查，但未验收 Linux 真实 QQ/API 或守护部署。
 
 ```bash
 npm install

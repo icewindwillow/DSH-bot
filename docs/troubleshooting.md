@@ -8,7 +8,7 @@
 
 确认当前终端能运行 `dsh --help` 与 `node --version`。启动器可使用显式 `QQBOT_DSH_BIN` 或 PATH 中的 DSH；以当前版本脚本的诊断提示为准。不要把别人电脑上的绝对路径复制到自己机器。
 
-推荐 Node 24 LTS；本机 macOS 已在 Node 24.22.2 / 25.8.1 通过离线回归，远端 CI 与 Linux 验收仍待完成。若原生 SQLite、模型依赖或宿主安装失败，记录精确版本与去敏后的错误，不要承诺换 Node 一定解决。
+推荐 Node 24 LTS；本机 macOS 已在 Node 24.22.2 / 25.8.1 通过离线回归，Node 24/25 × Ubuntu/macOS 四组远端 CI 已通过；真实 QQ/API 和 Linux 守护部署仍需另外验收。若原生 SQLite、模型依赖或宿主安装失败，记录精确版本与去敏后的错误，不要承诺换 Node 一定解决。
 
 ## init 好像没有改变配置
 
