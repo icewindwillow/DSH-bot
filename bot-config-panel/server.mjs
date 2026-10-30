@@ -524,6 +524,17 @@ function readJsonFile(file, fallback) {
   }
 }
 
+// 角色模块：面板按人勾选，勾选结果落到各自的数据文件里。
+// 新增模块时只改这里 + 前端 P_MODULES + PUT 的写入逻辑。
+function moduleAudienceMatch(skill, name, person) {
+  return (Array.isArray(skill?.audiences) ? skill.audiences : []).some((audience) =>
+    audience && (audience.person === name || (Array.isArray(audience.openids) && Array.isArray(person?.openids)
+      && audience.openids.some((id) => person.openids.includes(id)))));
+}
+function imageSkillIdOf(roleDoc) {
+  return String(roleDoc?.imagePermission?.skill ?? 'image-gen');
+}
+
 function effectiveModuleFor(person) {
   const name = String(person?.name ?? '');
   const modules = readJsonFile(MODULES, { people: {} });
@@ -533,10 +544,10 @@ function effectiveModuleFor(person) {
     entry && (entry.name === name || (Array.isArray(entry.openids) && Array.isArray(person?.openids)
       && entry.openids.some((id) => person.openids.includes(id)))));
   const roleDoc = readJsonFile(ROLE_REGISTRY, { skills: [] });
-  const styleSkill = (Array.isArray(roleDoc.skills) ? roleDoc.skills : []).find((skill) =>
-    skill && Array.isArray(skill.audiences) && skill.audiences.some((audience) =>
-      audience && (audience.person === name || (Array.isArray(audience.openids) && Array.isArray(person?.openids)
-        && audience.openids.some((id) => person.openids.includes(id))))));
+  const skills = Array.isArray(roleDoc.skills) ? roleDoc.skills : [];
+  // 能力型技能（生图）不是语言风格，不参与 style 模块的判定。
+  const styleSkill = skills.find((skill) => skill && skill.kind !== 'capability' && moduleAudienceMatch(skill, name, person));
+  const imageSkill = skills.find((skill) => skill && String(skill.id ?? '') === imageSkillIdOf(roleDoc));
   return {
     collectImages: {
       enabled: Boolean(allowEntry),
@@ -549,6 +560,9 @@ function effectiveModuleFor(person) {
     style: {
       enabled: Boolean(styleSkill),
       skill: String(styleSkill?.id ?? ''),
+    },
+    imageGen: {
+      enabled: Boolean(imageSkill) && moduleAudienceMatch(imageSkill, name, person),
     },
   };
 }
@@ -1185,6 +1199,7 @@ const server = createServer((req, res) => {
         collectImages: { enabled: input.collectImages?.enabled === true, categories },
         topics: { enabled: input.topics?.enabled === true, topics },
         style: { enabled: input.style?.enabled === true && styleSkill !== '' && skillExists, skill: styleSkill },
+        imageGen: { enabled: input.imageGen?.enabled === true },
       };
 
       const modulesDoc = readJsonFile(MODULES, { people: {} });
@@ -1218,6 +1233,25 @@ const server = createServer((req, res) => {
       if (next.style.enabled) {
         const skill = roleDoc.skills.find((item) => item.id === styleSkill);
         if (skill) skill.audiences.push({ person: name, openids, groups, default: true });
+      }
+      // 生图模块 → 生图技能（imagePermission.skill，缺省 image-gen）的受众；
+      // 技能不存在就建一个纯权限技能（没有 SKILL.md，不注入提示词）。
+      const imageSkillId = imageSkillIdOf(roleDoc);
+      let imageSkill = roleDoc.skills.find((item) => item && String(item.id ?? '') === imageSkillId);
+      if (imageSkill && Array.isArray(imageSkill.audiences)) {
+        imageSkill.audiences = imageSkill.audiences.filter((audience) =>
+          audience && !(audience.person === name || (Array.isArray(audience.openids) && audience.openids.some((id) => openids.includes(id)))));
+      }
+      if (next.imageGen.enabled) {
+        if (!imageSkill) {
+          imageSkill = {
+            id: imageSkillId, name: '生图', category: '能力', kind: 'capability', enabled: true,
+            description: '允许让机器人画图的人。只认这个技能的受众，不注入提示词。', audiences: [],
+          };
+          roleDoc.skills.push(imageSkill);
+        }
+        if (!Array.isArray(imageSkill.audiences)) imageSkill.audiences = [];
+        imageSkill.audiences.push({ person: name, openids, groups, default: true });
       }
       const roleBackup = writeWithBackup(ROLE_REGISTRY, `${JSON.stringify(roleDoc, null, 2)}\n`);
 

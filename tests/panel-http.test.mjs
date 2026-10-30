@@ -253,6 +253,33 @@ test('real panel HTTP: DSH_HOME/profile name and spaced Chinese paths; overlay w
   });
 });
 
+test('real panel HTTP: the per-person image toggle syncs to the image-gen skill audience', async () => {
+  await withPanel({}, async ({ profile, port, cookie }) => {
+    writeFileSync(join(profile, 'qqbot-people.json'), JSON.stringify({
+      people: [{ name: '甲', openids: ['openid-a'] }, { name: '乙', openids: ['openid-b'] }],
+    }), { mode: 0o600 });
+    writeFileSync(join(profile, 'qqbot-role-skills.json'), JSON.stringify({
+      imagePermission: { affinityMin: 60, skill: 'image-gen' },
+      skills: [{ id: 'image-gen', kind: 'capability', audiences: [{ person: '甲', openids: ['openid-a'], groups: [] }] }],
+    }), { mode: 0o600 });
+
+    const before = await request(port, '/api/modules', { cookie });
+    assert.equal(before.json.people['甲'].imageGen.enabled, true);
+    assert.equal(before.json.people['乙'].imageGen.enabled, false);
+    assert.deepEqual(before.json.skills.map((skill) => skill.id), [], 'capability skills are not style options');
+
+    const off = await request(port, '/api/modules', { cookie, method: 'PUT', body: { name: '甲', modules: { imageGen: { enabled: false } } } });
+    assert.equal(off.json.modules.imageGen.enabled, false);
+    const removed = JSON.parse(readFileSync(join(profile, 'qqbot-role-skills.json'), 'utf8'));
+    assert.deepEqual(removed.skills.find((skill) => skill.id === 'image-gen').audiences, []);
+
+    const on = await request(port, '/api/modules', { cookie, method: 'PUT', body: { name: '乙', modules: { imageGen: { enabled: true } } } });
+    assert.equal(on.json.modules.imageGen.enabled, true);
+    const added = JSON.parse(readFileSync(join(profile, 'qqbot-role-skills.json'), 'utf8'));
+    assert.deepEqual(added.skills.find((skill) => skill.id === 'image-gen').audiences.map((audience) => audience.person), ['乙']);
+  });
+});
+
 test('real panel HTTP: image settings default off, credential saves do not enable, strict save dynamically rereads', { timeout: 20000 }, async () => {
   await withPanel({ defaultProfile: true }, async ({ port, cookie, profile }) => {
     const imageFile = join(profile, 'qqbot-image-generation.json');

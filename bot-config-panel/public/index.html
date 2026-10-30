@@ -2010,50 +2010,92 @@ function pRelationsSection(person) {
   ]);
 }
 
+// 角色模块注册表：加新模块只需要在这里加一项（再配一条服务端写入规则）。
+// input = 勾选后出现的一行文本（逗号分隔成数组）；select = 勾选后出现的下拉。
+const P_MODULES = [
+  {
+    id: 'collectImages',
+    title: '收集图片',
+    desc: '只收这个人的图；分类留空表示除梗图 / 表情包外都收。',
+    input: { key: 'categories', label: '收图分类（逗号 / 顿号分隔）', placeholder: '美食、人像、风景…' },
+  },
+  {
+    id: 'topics',
+    title: '回应主题',
+    desc: '他分享作品、游戏、电影或链接时，先查口碑再评论；不收图。',
+    input: { key: 'topics', label: '关注主题（可选）', placeholder: '游戏、电影、小说、链接…' },
+  },
+  {
+    id: 'style',
+    title: '用特定语言方式回应',
+    desc: '选一个角色技能；只对这个人生效。',
+    select: { key: 'skill', label: '语言风格' },
+  },
+  {
+    id: 'imageGen',
+    title: '允许他让机器人画图',
+    desc: '勾上后可以直接说「画一只猫」，不必打 /生图。',
+  },
+];
+
+function pModuleFallback(module) {
+  if (module.input) return { enabled: false, [module.input.key]: [] };
+  if (module.select) return { enabled: false, [module.select.key]: '' };
+  return { enabled: false };
+}
+
 function pModulesSection(person) {
-  const fallback = {
-    collectImages: { enabled: false, categories: [] },
-    topics: { enabled: false, topics: [] },
-    style: { enabled: false, skill: '' },
-  };
-  const current = personModules[person.name] ?? fallback;
-  const draft = JSON.parse(JSON.stringify(current));
-  draft.collectImages = draft.collectImages ?? fallback.collectImages;
-  draft.topics = draft.topics ?? fallback.topics;
-  draft.style = draft.style ?? fallback.style;
-
-  const collectCats = pEl('input', { type: 'text', placeholder: '美食、人像、风景…（留空=除梗图/表情包外都收）' });
-  collectCats.value = (draft.collectImages.categories ?? []).join('、');
-  collectCats.disabled = !draft.collectImages.enabled;
-
-  const topicList = pEl('input', { type: 'text', placeholder: '游戏、电影、小说、链接…' });
-  topicList.value = (draft.topics.topics ?? []).join('、');
-  topicList.disabled = !draft.topics.enabled;
-
-  const skill = pEl('select');
-  const options = moduleSkills.length > 0 ? moduleSkills : [{ id: '', name: '（暂无角色技能）' }];
-  for (const item of options) {
-    const opt = pEl('option', { value: item.id }, item.name || item.id);
-    skill.append(opt);
+  const current = personModules[person.name] ?? {};
+  const draft = {};
+  const controls = {};
+  for (const module of P_MODULES) {
+    const value = current[module.id];
+    draft[module.id] = { ...pModuleFallback(module), ...(value && typeof value === 'object' ? value : {}) };
   }
-  if (draft.style.skill && !options.some((item) => item.id === draft.style.skill)) {
-    skill.append(pEl('option', { value: draft.style.skill }, draft.style.skill));
-  }
-  skill.value = draft.style.skill || '';
-  skill.disabled = !draft.style.enabled;
+
+  const rows = P_MODULES.map((module) => {
+    const state = draft[module.id];
+    let extra = null;
+    if (module.input) {
+      const field = pEl('input', { type: 'text', placeholder: module.input.placeholder });
+      field.value = (Array.isArray(state[module.input.key]) ? state[module.input.key] : []).join('、');
+      controls[module.id] = field;
+      extra = pEl('div', { class: 'field' }, [pEl('label', {}, module.input.label), field]);
+    }
+    else if (module.select) {
+      const select = pEl('select');
+      const options = moduleSkills.length > 0 ? moduleSkills : [{ id: '', name: '（暂无角色技能）' }];
+      for (const item of options) select.append(pEl('option', { value: item.id }, item.name || item.id));
+      if (state[module.select.key] && !options.some((item) => item.id === state[module.select.key])) {
+        select.append(pEl('option', { value: state[module.select.key] }, state[module.select.key]));
+      }
+      select.value = state[module.select.key] || '';
+      controls[module.id] = select;
+      extra = pEl('div', { class: 'field' }, [pEl('label', {}, module.select.label), select]);
+    }
+    if (extra) extra.style.display = state.enabled ? '' : 'none';
+    const toggle = pCheckField(module.title, state.enabled === true, (checked) => {
+      state.enabled = checked;
+      if (extra) extra.style.display = checked ? '' : 'none';
+    }, module.desc);
+    return pEl('div', { class: 'p-module', style: 'margin-top:6px' }, [toggle, extra].filter(Boolean));
+  });
 
   const save = pEl('button', { class: 'primary small', onclick: async () => {
-    const modules = {
-      collectImages: {
-        enabled: draft.collectImages.enabled,
-        categories: collectCats.value.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
-      },
-      topics: {
-        enabled: draft.topics.enabled,
-        topics: topicList.value.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
-      },
-      style: { enabled: draft.style.enabled, skill: skill.value },
-    };
+    const modules = {};
+    for (const module of P_MODULES) {
+      const state = draft[module.id];
+      if (module.input) {
+        modules[module.id] = {
+          enabled: state.enabled === true,
+          [module.input.key]: controls[module.id].value.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
+        };
+      } else if (module.select) {
+        modules[module.id] = { enabled: state.enabled === true, [module.select.key]: controls[module.id].value };
+      } else {
+        modules[module.id] = { enabled: state.enabled === true };
+      }
+    }
     try {
       const res = await api('/api/modules', { method: 'PUT', body: JSON.stringify({ name: person.name, modules }) });
       personModules[person.name] = res.modules;
@@ -2068,23 +2110,9 @@ function pModulesSection(person) {
   } }, '保存模块');
 
   return pEl('div', {}, [
-    pEl('p', { class: 'hint', style: 'margin:-4px 0 8px' },
-      '三个模块按人勾选。收图会同步到图库的收图名单；语言风格会同步到角色技能；主题模块只在他分享图片/文字/链接时注入。'),
-    pCheckField('1. 收集图片（梗图 / 表情包自动跳过）', draft.collectImages.enabled, (checked) => {
-      draft.collectImages.enabled = checked;
-      collectCats.disabled = !checked;
-    }, '只收这个人的图；分类留空表示除梗图/表情包外都收。'),
-    pEl('div', { class: 'field' }, [pEl('label', {}, '收图分类（逗号/顿号分隔）'), collectCats]),
-    pCheckField('2. 回应主题（图片 / 文字 / 链接，先搜索再回复）', draft.topics.enabled, (checked) => {
-      draft.topics.enabled = checked;
-      topicList.disabled = !checked;
-    }, '他分享作品、游戏、电影、小说或链接时，先查口碑再评论；不收图。'),
-    pEl('div', { class: 'field' }, [pEl('label', {}, '关注主题（可选）'), topicList]),
-    pCheckField('3. 用特定语言方式回应', draft.style.enabled, (checked) => {
-      draft.style.enabled = checked;
-      skill.disabled = !checked;
-    }, '选一个角色技能；只对这个人生效。'),
-    pEl('div', { class: 'field' }, [pEl('label', {}, '语言风格'), skill]),
+    pEl('p', { class: 'hint', style: 'margin:-4px 0 6px' },
+      '按人勾选，勾上才生效。收图会同步到图库名单，语言风格和生图会同步到角色技能。'),
+    ...rows,
     pEl('div', { style: 'margin-top:12px' }, [save]),
   ]);
 }
