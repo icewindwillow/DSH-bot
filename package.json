@@ -1,0 +1,28 @@
+{
+  "name": "dsh-bot",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "让群聊助手有性格、有记忆，也懂得适时安静。DSH QQ bot enhancements.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/icewindwillow/DSH-bot.git"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "init": "node scripts/init-profile.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "panel": "node bot-config-panel/server.mjs",
+    "bot": "node scripts/start-bot.mjs",
+    "patch:plan": "node scripts/patch.mjs --plan",
+    "patch": "node scripts/patch.mjs",
+    "patch:check": "node scripts/patch.mjs --check",
+    "patch:revert": "node scripts/patch.mjs --revert",
+    "test": "node scripts/test-unit.mjs",
+    "security:check": "node scripts/security-check.mjs",
+    "check": "npm test && npm run security:check"
+  }
+}

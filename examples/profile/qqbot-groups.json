@@ -1,0 +1,10 @@
+{
+  "noMention": [],
+  "wakeWords": [
+    "小易"
+  ],
+  "wakeCooldownMs": 3000,
+  "conversationWindowMs": 180000,
+  "wakeIndex": {},
+  "prompts": {}
+}

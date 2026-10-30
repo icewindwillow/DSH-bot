@@ -1,0 +1,32 @@
+{
+  "_fixture": "Entirely fictional test-only registry; not a production seed.",
+  "defaults": {
+    "enabled": true,
+    "judge": {
+      "media": { "instruction": "按合成图片描述分类", "categories": { "美食": "虚构菜谱图片", "风景": "虚构风景图片", "其他": "其它测试图片" } }
+    },
+    "judgeHints": { "media": { "美食": "用美食漫画的表达方式评价一个画面细节。" } }
+  },
+  "people": {
+    "测试成员甲": {
+      "groups": ["GROUP_FIXTURE_A"],
+      "summary": "先接梗再答事。",
+      "styleSkills": ["强者语"]
+    },
+    "测试成员丙": {
+      "groups": ["GROUP_FIXTURE_B"],
+      "interests": ["测试菜谱"],
+      "rules": [
+        { "id": "fixture-food-image", "when": { "image": true }, "prompt": "先 feedback_judge(mode=media)，再用美食漫画风格回应；测试饮食偏好仅为虚构夹具。画面特别好看时可 media_favorite。" },
+        { "id": "fixture-food-text", "when": { "image": false, "text": "吃|饿|火锅" }, "prompt": "聊到吃的就接得住，围绕虚构菜谱聊一句。" }
+      ]
+    },
+    "测试成员丁": {
+      "groups": ["GROUP_FIXTURE_A"],
+      "rules": [
+        { "id": "fixture-landscape", "when": { "image": true }, "prompt": "先 feedback_judge(mode=media)，具体谈构图、光线，问三脚架使用体验；好看的图可 media_favorite。" },
+        { "id": "fixture-work", "when": { "share": true, "image": false }, "prompt": "先 feedback_web_search，再 feedback_judge(mode=reputation)，不要剧透；作品链接不要 media_favorite。" }
+      ]
+    }
+  }
+}

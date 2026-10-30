@@ -1,0 +1,7 @@
+# dsh-tabletop bundle patch
+#
+# 通过 `dsh plugin --profile <name> add <this-dir>` 安装后，
+# dsh 启动时会自动把本插件插入加载树。
+- insert:
+    - id: dsh-tabletop
+      name: 'dsh-tabletop'

@@ -1,0 +1,17 @@
+{
+  "name": "dsh-profile-example",
+  "private": true,
+  "dependencies": {
+    "@tencent-connect/dsh-qqbot": "0.5.2",
+    "@tr1v3r/dsh-ltm": "0.3.4"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@tencent-connect/dsh-qqbot",
+        "@tr1v3r/dsh-ltm"
+      ]
+    }
+  }
+}

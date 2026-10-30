@@ -1,0 +1,52 @@
+# Public overlay: mounted by npm run bot after the profile's own patch.
+# Contains no credentials. QQ bundle reads QQBOT_APPID / QQBOT_SECRET.
+- id: im-qqbot
+  config:
+    appId: __FROM_ENV__
+    appSecret: __FROM_ENV__
+    requireMention: true
+    textChunkLimit: 4500
+    sessionIdleTimeout: 1800000
+    maxQueue: 20
+    processingTimeoutMs: 1800000
+    historyLimit: 10
+    access:
+      c2cMode: open
+      c2cAllow: []
+      groupMode: open
+      groupAllow: []
+    debug: false
+- id: llm-pi-ai
+  config:
+    providers:
+      openai:
+        displayName: OpenAI
+        apiKeyEnv: OPENAI_API_KEY
+        models:
+          - id: gpt-4.1
+          - id: gpt-5.4-mini
+          - id: gpt-5.3-codex
+          - id: gpt-5.6-luna
+          - id: gpt-5.6-terra
+          - id: gpt-5.6-sol
+          - id: gpt-6.1-sol
+      deepseek:
+        displayName: DeepSeek
+        apiKeyEnv: DEEPSEEK_API_KEY
+        models:
+          - id: deepseek-chat
+- id: agent-default-model
+  config:
+    provider: openai
+    model: gpt-4.1
+# Enhanced web routes need the full QQ patch deployment first.
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: qqbot-model-aware-search
+    fetchProvider: qqbot-model-aware-fetch
+- id: tool-web
+  disabled: false
+  config:
+    searchTimeoutMs: 90000
+    fetch: false

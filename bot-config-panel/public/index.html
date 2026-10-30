@@ -1,0 +1,2569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
+<title>小易 · 机器人控制台</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --line: #2a2f3a;
+    --text: #e6e8ee; --muted: #9aa3b2; --accent: #6ea8fe; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  .pill {
+    font-size: 12px; border: 1px solid var(--line); border-radius: 999px;
+    padding: 2px 9px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill.on { color: var(--ok); border-color: #1f4a2c; }
+  .pill.on .dot { background: var(--ok); box-shadow: 0 0 6px #3fb95088; }
+  .pill.off { color: var(--err); border-color: #4a2020; }
+  .pill.off .dot { background: var(--err); }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #3a4150; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button.ghost { background: transparent; }
+  button.small { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
+  button.mini { padding: 0 6px; font-size: 12px; line-height: 1.6; border-radius: 5px; }
+  button.danger { color: var(--err); }
+  nav.tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto; overflow-x: auto; }
+  nav.tabs button {
+    background: transparent; border: 1px solid transparent; border-bottom: none;
+    border-radius: 8px 8px 0 0; padding: 7px 14px; color: var(--muted);
+  }
+  nav.tabs button.active { background: var(--bg); border-color: var(--line); color: var(--text); }
+  main { flex: 1; min-height: 0; display: flex; }
+  .pane { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px 80px; }
+  .pane[hidden] { display: none; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 4px; color: var(--text); font-weight: 600; }
+  .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field .sub { font-size: 11px; color: var(--muted); }
+  select, input[type=text], input[type=password], textarea {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 7px 9px; font: inherit; width: 100%;
+  }
+  select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 110px; line-height: 1.5; font-size: 13px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip.ok { color: var(--ok); border-color: #1f4a2c; }
+  .chip.bad { color: var(--err); border-color: #4a2020; text-decoration: line-through; }
+  .alert { border-radius: 10px; padding: 9px 12px; font-size: 12px; margin: 0 0 12px; }
+  .alert.warn { background: #2a2211; border: 1px solid #5a4718; color: #e3b341; }
+  .alert.err { background: #2a1414; border: 1px solid #5a2020; color: #ff9b96; }
+  .alert.ok { background: #12251a; border: 1px solid #1f4a2c; color: #7ee2a8; }
+  .alert.info { background: #141c2a; border: 1px solid #24405f; color: #a9c6ea; }
+  table.matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.matrix th, table.matrix td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  table.matrix th { color: var(--muted); font-weight: 500; }
+  table.matrix td.bad { color: var(--err); }
+  table.matrix td.ok { color: var(--ok); }
+  .savebar {
+    position: sticky; bottom: 0; margin-top: 8px; padding: 10px 0 2px;
+    display: flex; align-items: center; gap: 10px; background: linear-gradient(transparent, var(--bg) 30%);
+  }
+  .savebar .msg { font-size: 12px; color: var(--muted); }
+  .savebar .msg.ok { color: var(--ok); }
+  .savebar .msg.err { color: var(--err); }
+  .savebar .msg.warn { color: var(--warn); }
+  /* 人格页 */
+  .two { flex: 1; min-height: 0; display: flex; }
+  aside.people {
+    width: 272px; flex: 0 0 auto; border-right: 1px solid var(--line);
+    background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+  }
+  .pane-title {
+    padding: 10px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--muted);
+  }
+  ul.plist { list-style: none; margin: 0; padding: 4px 8px 12px; overflow: auto; flex: 1; }
+  ul.plist li {
+    padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex;
+    justify-content: space-between; align-items: center; gap: 8px; font-size: 13px;
+  }
+  ul.plist li:hover { background: var(--panel2); }
+  ul.plist li.active { background: #243043; outline: 1px solid #33507a; }
+  ul.plist li .id { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  ul.plist li .badge { font-size: 10px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  ul.plist li .badge.own { color: var(--accent); border-color: #2c466b; }
+  ol.modules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  ol.modules li {
+    display: flex; align-items: center; gap: 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+  }
+  ol.modules li .name { flex: 1; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  ol.modules li .preview { flex: 2; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ol.modules li .ops { display: flex; gap: 3px; flex: 0 0 auto; }
+  .mod-editor { display: flex; flex-direction: column; gap: 8px; }
+  details.mod { border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); overflow: hidden; }
+  details.mod > summary {
+    cursor: pointer; padding: 8px 10px; font-size: 12px; list-style: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.mod > summary::-webkit-details-marker { display: none; }
+  details.mod[open] > summary { border-bottom: 1px solid var(--line); }
+  details.mod .body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  details.mod .meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+  pre.preview {
+    background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6;
+    max-height: 320px; overflow: auto; margin: 0; color: #c9d1d9;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row .grow { flex: 1; }
+  .kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: #0b0d12; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: #1b2431; border: 1px solid #2c3b50; color: var(--text);
+    padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: 0 8px 30px #0008;
+    opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 50; max-width: 80vw;
+  }
+  .toast.show { opacity: 1; }
+  .toast.err { border-color: #5a2020; color: #ffb4ae; }
+  .toast.ok { border-color: #1f4a2c; color: #9be9bd; }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  input[type=range] { accent-color: var(--accent); }
+
+  /* ───────────── 图库 ───────────── */
+  .pane.gallery-pane { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .pane.gallery-pane[hidden] { display: none; }
+  .gallery-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto;
+  }
+  .gallery-toolbar input, .gallery-toolbar select { width: auto; }
+  #galleryQuery { flex: 1; min-width: 200px; }
+  #galleryGroup { min-width: 160px; }
+  #galleryPerson { width: 180px; }
+  .gallery-note { display: flex; align-items: center; gap: 8px; padding: 6px 18px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .allow-modal { position: fixed; inset: 0; background: #000c; z-index: 110; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .allow-modal[hidden] { display: none; }
+  .allow-box { width: min(720px, 92vw); max-height: 86vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+  .allow-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .allow-head input { flex: 1; width: auto; }
+  .allow-list { overflow: auto; padding: 6px 16px; }
+  .allow-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .allow-row input[type=checkbox] { width: auto; flex: 0 0 auto; }
+  .allow-row .nm { width: 140px; flex: 0 0 auto; font-size: 13px; }
+  .allow-row .cats { flex: 1; }
+  .allow-foot { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+  .gallery-grid {
+    flex: 1; overflow: auto; padding: 16px 18px 60px; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; align-content: start;
+  }
+  .gcard { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: zoom-in; display: flex; flex-direction: column; }
+  .gcard.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .gcard .gcheck { position: absolute; top: 8px; left: 8px; z-index: 2; width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  .gcard:hover { border-color: #33507a; }
+  .gcard img { width: 100%; height: 150px; object-fit: cover; display: block; background: #0b0d12; }
+  .gcard .cap { padding: 8px 10px 2px; font-size: 12px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .gcard .sub { padding: 0 10px 9px; color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 6px; }
+  .gallery-empty { grid-column: 1/-1; color: var(--muted); text-align: center; padding: 60px 16px; font-size: 13px; }
+  .lightbox { position: fixed; inset: 0; background: #000c; z-index: 100; display: none; align-items: center; justify-content: center; padding: 24px; }
+  .lightbox.show { display: flex; }
+  .lightbox .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; gap: 8px; }
+  .lightbox img { max-width: 88vw; max-height: 74vh; object-fit: contain; border-radius: 8px; background: #000; }
+  .lightbox .lbmeta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .lightbox .lbmeta strong { color: var(--text); }
+
+  /* ───────────── 群成员档案 ───────────── */
+  .pane.people-pane { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .pane.people-pane[hidden] { display: none; }
+  .people-toolbar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 18px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto; flex-wrap: wrap;
+  }
+  .gchips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  .gchip {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .gchip:hover { border-color: #3a4150; color: var(--text); }
+  .gchip.active { background: #243043; border-color: #33507a; color: var(--text); }
+  .gchip .n { font-size: 10px; color: var(--muted); }
+  .people-toolbar-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .msg { font-size: 12px; color: var(--muted); }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--err); }
+  .msg.warn { color: var(--warn); }
+  .group-manage { padding: 10px 18px 8px; border-bottom: 1px solid var(--line); background: #141821; flex: 0 0 auto; }
+  .group-manage .row { margin-bottom: 6px; }
+  .group-manage input { max-width: 340px; }
+  .gmrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; flex-wrap: wrap; }
+  .gmrow .gid { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .gmrow .grow { flex: 1; }
+  .people-layout { flex: 1; min-height: 0; display: flex; }
+  aside.members {
+    width: 300px; flex: 0 0 auto; border-right: 1px solid var(--line);
+    background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+  }
+  .members-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px; }
+  .members-head input { flex: 1; min-width: 0; }
+  .members-head .muted { font-size: 11px; white-space: nowrap; }
+  .members-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+  ul.mlist { list-style: none; margin: 0; padding: 4px 8px 14px; overflow: auto; flex: 1; }
+  ul.mlist li {
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex;
+    justify-content: space-between; align-items: center; gap: 8px; font-size: 13px;
+  }
+  ul.mlist li:hover { background: var(--panel2); }
+  ul.mlist li.active { background: #243043; outline: 1px solid #33507a; }
+  ul.mlist li.empty { color: var(--muted); cursor: default; justify-content: center; padding: 18px 10px; }
+  ul.mlist .nmline { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+  ul.mlist .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.mlist .sub { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
+  ul.mlist .flags { display: flex; gap: 3px; }
+  .flag { font-size: 10px; padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .flag.on { color: #f0c674; border-color: #6b5320; background: #3b2d17; }
+  .member-form { flex: 1; min-width: 0; overflow: auto; padding: 0 0 80px; }
+  .form-head {
+    position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 10px;
+    padding: 12px 22px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(var(--bg) 72%, transparent);
+  }
+  .form-head .fh-main { min-width: 0; }
+  .form-head .fh-name { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .form-head .fh-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .form-head .grow { flex: 1; }
+  .form-body { padding: 16px 22px 30px; max-width: 1080px; margin: 0 auto; }
+  .form-body .card:last-child { margin-bottom: 0; }
+  .form-body .grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .form-body .field > input, .form-body .field > textarea { width: 100%; }
+  .form-body .hint { margin: 8px 0 0; }
+  .check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+  .check input { width: auto; flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--accent); }
+  .form-body .field .check input { width: auto; flex: 0 0 auto; }
+  .check span { font-size: 13px; color: var(--text); }
+  .rows { display: flex; flex-direction: column; gap: 7px; }
+  .row label { font-size: 12px; color: var(--muted); }
+  .row-between { justify-content: space-between; margin-bottom: 7px; }
+  .rowlabel { width: 64px; flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+  .groups-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .empty { color: var(--muted); text-align: center; padding: 48px 16px; font-size: 13px; }
+  @media (max-width: 1150px) {
+    .people-layout { flex-direction: column; }
+    aside.members { width: 100%; max-height: 38vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .member-form { flex: 1; }
+    .form-body { padding: 14px 16px 30px; }
+    .form-head { padding: 10px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>小易 · 机器人控制台</h1>
+  <span class="pill" id="botPill"><span class="dot"></span><span id="botText">检测中…</span></span>
+  <span class="spacer"></span>
+  <span class="muted mono" id="cfgPath"></span>
+  <button class="ghost" id="btnReload" title="重新读取磁盘上的配置">重新读取</button>
+  <button id="btnRestart" title="杀掉旧进程并用同样参数重新拉起">重启机器人</button>
+</header>
+
+<nav class="tabs">
+  <button id="tabModel" class="active">模型与推理</button>
+  <button id="tabCredentials">API 密钥 / QQ 连接</button>
+  <button id="tabPersona">人格设定</button>
+  <button id="tabPeople">群成员档案</button>
+  <button id="tabGallery">图库</button>
+  <button id="tabEvents">事件追踪</button>
+  <button id="tabOwners">指令权限</button>
+</nav>
+
+<main>
+  <!-- ───────────── 模型与推理 ───────────── -->
+  <section class="pane" id="paneModel">
+    <div id="modelAlerts"></div>
+
+    <div class="card">
+      <h2>机器人使用的模型</h2>
+      <p class="hint">写进 <span class="kbd">cordis.patch.yml</span> 的 <span class="kbd">agent-default-model</span>，决定机器人回复用哪个模型。改完需要重启机器人。官方服务商密钥可在「API 密钥 / QQ 连接」配置。</p>
+      <p class="hint">Our Free Model 是第三方插件提供的模型路由，需先安装并完成对应配置才会出现。上游可能有额度、限流、服务条款与可用性变化，不保证长期或无限免费；不要使用来源不明的共享密钥。</p>
+      <div class="grid">
+        <div class="field">
+          <label for="selProvider">服务商（provider）</label>
+          <select id="selProvider"></select>
+        </div>
+        <div class="field">
+          <label for="selModel">模型</label>
+          <select id="selModel"></select>
+          <span class="sub" id="modelMeta"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>推理强度</h2>
+      <p class="hint">
+        <span class="kbd">off / low / high / max</span> 不是每个模型都支持全档位。两个字段作用不同，建议保持一致。
+      </p>
+      <div class="grid">
+        <div class="field">
+          <label for="selEffort">默认模型选择的推理强度 <span class="mono">agent-default-model.reasoningEffort</span></label>
+          <select id="selEffort"></select>
+          <span class="sub">新会话的模型选择会带上它（界面上看到的「推理强度」）。</span>
+        </div>
+        <div class="field">
+          <label for="selRouteEffort">路由默认推理强度 <span class="mono">llm-pi-ai · providers.&lt;provider&gt;.reasoning</span></label>
+          <select id="selRouteEffort"></select>
+          <span class="sub">对所有会话立即生效，包括已经在跑的群会话；留空 = 交给模型默认。</span>
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="muted" style="font-size:12px;margin-bottom:6px">当前模型支持的档位</div>
+        <div class="chips" id="effortChips"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>路由内模型 × 推理强度</h2>
+      <p class="hint">路由默认是整条 <span class="mono" id="routeName">opencode-go</span> 共用的；某行标红说明该模型不支持这个档位，用到它会直接报错。</p>
+      <table class="matrix" id="matrix"></table>
+    </div>
+
+    <div class="savebar">
+      <button class="primary" id="btnSaveModel">保存模型与推理强度</button>
+      <button id="btnSaveRestart" disabled>保存并重启</button>
+      <span class="msg" id="modelMsg"></span>
+    </div>
+  </section>
+
+  <!-- ───────────── API 密钥 / QQ 连接 ───────────── -->
+  <section class="pane" id="paneCredentials" hidden>
+    <div class="card">
+      <h2>首次使用：填写你需要的服务</h2>
+      <p class="hint">① 填写 QQ 机器人连接信息；② 按所选模型或功能填写对应 API 密钥，不用全部填写；③ 保存后重启机器人。模型仍需到「模型与推理」选择，保存密钥不会自动切换模型，也不代表权限或额度已验证。</p>
+      <div class="alert warn">密钥只保存在当前 profile 的 <span class="kbd">.bot-secrets.json</span>（文件权限 600）。这是本机明文文件，并非加密保险库；不要分享、上传到 Git 或截图泄露。请仅在可信的本机浏览器使用面板。</div>
+      <div class="alert info">继承环境变量优先：启动进程已有非空环境变量时，会优先使用它，本地填写的值不会覆盖它。面板只显示「是否配置 / 来源」，绝不显示已有值或末尾。留空 = 保留；勾选删除 = 只清除本地副本，无法清除启动环境中的值。</div>
+      <div id="credentialsAlerts" role="status" aria-live="polite"></div>
+    </div>
+    <form id="credentialsForm" autocomplete="off">
+      <div class="card">
+        <h2>QQ 机器人连接</h2>
+        <p class="hint">QQ 开放平台机器人 AppID 与机器人密钥。使用官方插件支持的 <span class="kbd">QQBOT_APPID</span> / <span class="kbd">QQBOT_SECRET</span>，不是个人 QQ 密码；还需完成开放平台机器人权限与插件配置。</p>
+        <div class="grid" id="qqCredentialFields"></div>
+      </div>
+      <div class="card">
+        <h2>模型与辅助功能的 API 密钥</h2>
+        <p class="hint">只填你要使用的服务。API 通常按服务商规则计费；配置成功不等于联网、权限、额度验证成功。Our Free Model 通过对应第三方插件安装，不在这里填写所谓「免费 Key」，也不保证长期、无限免费。</p>
+        <div class="grid" id="apiCredentialFields"></div>
+      </div>
+      <div class="savebar">
+        <button type="submit" class="primary" id="btnSaveCredentials" disabled>保存密钥与连接配置</button>
+        <button type="button" id="btnReloadCredentials">刷新状态 / 清空输入</button>
+        <span class="msg" id="credentialsMsg" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+  </section>
+
+  <!-- ───────────── 人格设定 ───────────── -->
+  <section class="pane" id="panePersona" hidden>
+    <div class="two">
+      <aside class="people">
+        <div class="pane-title">机器人 / 群</div>
+        <ul class="plist" id="plist"></ul>
+      </aside>
+      <div class="pane" style="padding:18px 22px 80px">
+        <div id="personaAlerts"></div>
+
+        <div class="card">
+          <h2 id="personaTitle">当前人格</h2>
+          <p class="hint" id="personaHint"></p>
+          <div class="row" id="wakeRow" style="margin:6px 0 2px" hidden>
+            <label style="font-size:12px">唤醒指数</label>
+            <input type="range" id="wakeRange" min="0" max="100" step="5" style="width:220px">
+            <span class="badge own" id="wakeValue" style="font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid #2c466b;color:var(--accent)">100</span>
+            <span class="muted" style="font-size:12px">100 = 跟以前一样；越低越少主动插话（@ / 叫名字照样应）</span>
+          </div>
+          <p class="hint" id="wakeHint" hidden></p>
+          <div class="row" style="margin-bottom:10px">
+            <label class="muted" style="font-size:12px">人格类型（archetype）</label>
+            <select id="selArchetype" style="width:220px"></select>
+            <span class="grow"></span>
+            <button class="small" id="btnOwn" hidden>启用独立人格</button>
+            <button class="small" id="btnInherit" hidden>恢复继承默认</button>
+            <select id="selCopyTo" style="width:200px"></select>
+            <button class="small" id="btnCopy">复制到…</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin:10px 0 6px">模块顺序（按顺序拼接，运行时再自动追加「群聊行为守则」）</div>
+          <ol class="modules" id="moduleList"></ol>
+          <div class="row" style="margin-top:10px">
+            <select id="selAddModule" style="width:220px"></select>
+            <button class="small" id="btnAddModule">+ 追加模块</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>模块库</h2>
+          <p class="hint">所有模块的正文都在这里改；改完「保存人格」，机器人下一轮就会用新文本（不用重启）。</p>
+          <div class="row" style="margin-bottom:10px">
+            <button class="small" id="btnNewModule">+ 新建模块</button>
+            <span class="muted" style="font-size:12px" id="moduleCount"></span>
+          </div>
+          <div class="mod-editor" id="moduleEditor"></div>
+        </div>
+
+        <div class="card">
+          <h2>预览：这名机器人最终会拿到的人设</h2>
+          <p class="hint" id="previewHint">拼接顺序 = 模块顺序 → 人格类型 → 【群聊行为守则】（插件内置，所有群共用）。</p>
+          <pre class="preview" id="preview"></pre>
+        </div>
+
+        <div class="savebar">
+          <button class="primary" id="btnSavePersona">保存人格</button>
+          <span class="msg" id="personaMsg"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ───────────── 群成员档案 ───────────── -->
+  <section class="pane people-pane" id="panePeople" hidden>
+    <div class="people-toolbar">
+      <div class="gchips" id="peopleGroupChips"></div>
+      <div class="people-toolbar-actions">
+        <span class="msg" id="peopleStatus"></span>
+        <button class="small ghost" id="btnGroupManage">群管理 / 会话</button>
+      </div>
+    </div>
+    <div class="group-manage" id="groupManage" hidden>
+      <div class="row">
+        <input type="text" id="newGroupId" placeholder="group_openid" />
+        <input type="text" id="newGroupName" placeholder="输入群名称" />
+        <button class="small" id="btnAddGroup">＋ 加群</button>
+        <span class="grow"></span>
+        <button class="small ghost" id="btnCloseGroupManage">收起</button>
+      </div>
+      <div id="groupManageList"></div>
+    </div>
+    <div class="people-layout">
+      <aside class="members">
+        <div class="members-head">
+          <input type="text" id="peopleSearch" placeholder="搜索名字 / 称呼 / 昵称 / openid" />
+          <span class="muted" id="peopleCount"></span>
+        </div>
+        <div class="members-actions">
+          <button class="small" id="btnAddPerson">＋ 新增角色</button>
+          <button class="small" id="btnDupPerson">复制</button>
+        </div>
+        <ul class="mlist" id="peopleList"></ul>
+      </aside>
+      <div class="member-form" id="memberForm"></div>
+    </div>
+  </section>
+
+
+  <!-- ───────────── 图库 ───────────── -->
+  <section class="pane gallery-pane" id="paneGallery" hidden>
+    <div class="gallery-toolbar">
+      <input type="text" id="galleryQuery" placeholder="搜关键词：威士忌、旅行、猫…" />
+      <select id="galleryGroup"><option value="">全部群</option></select>
+      <input type="text" id="galleryPerson" list="galleryPeople" placeholder="输入分享人名字" />
+      <datalist id="galleryPeople"></datalist>
+      <label class="muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:13px">
+        <input type="checkbox" id="galleryFavorites" style="width:auto" /> 只看收藏
+      </label>
+      <button class="small primary" id="gallerySearch">搜索</button>
+      <span class="muted" id="galleryCount"></span>
+      <span style="flex:1"></span>
+      <button class="small ghost" id="gallerySelectAll">全选</button>
+      <button class="small danger" id="galleryDelete" disabled>删除选中</button>
+    </div>
+    <div class="gallery-note">
+      <span id="galleryAllowNote"></span>
+      <span style="flex:1"></span>
+      <button class="small ghost" id="galleryAllowEdit">编辑名单</button>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
+  </section>
+
+  <!-- ───────────── 指令权限 ───────────── -->
+  <section class="pane" id="paneEvents" hidden>
+    <div class="people-toolbar">
+      <div class="gchips" id="eventFilters"></div>
+      <div class="people-toolbar-actions">
+        <span class="msg" id="eventsStatus"></span>
+        <button class="small ghost" id="btnReloadEvents">刷新</button>
+      </div>
+    </div>
+    <div class="people-layout" style="display:block">
+      <div id="eventList" class="rows"></div>
+    </div>
+  </section>
+
+  <section class="pane" id="paneOwners" hidden>
+    <div class="card">
+      <h2>谁能给机器人下指令</h2>
+      <p class="hint">
+        只有这里列出来的人，发的 <span class="kbd">/compact</span>、<span class="kbd">/new</span>、<span class="kbd">/model</span>
+        才会被执行；其他人的斜杠指令会被**静默丢弃**（不回复，也不会当成聊天送进模型）。
+        改完保存即生效，不用重启。
+      </p>
+      <div class="grid">
+        <div class="field">
+          <label>主人 openid（精确匹配，最可靠）</label>
+          <div class="chips" id="ownerIds"></div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="newOwnerId" placeholder="粘贴 openid 后回车" />
+            <button class="small" id="addOwnerId">添加</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>主人名字（按成员档案匹配，跨群不用记 id）</label>
+          <div class="chips" id="ownerNames"></div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="newOwnerName" placeholder="输入主人名字，回车添加" />
+            <button class="small" id="addOwnerName">添加</button>
+          </div>
+        </div>
+      </div>
+      <div id="ownersAlert" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <h2>从群成员里挑</h2>
+      <p class="hint">名单来自 <span class="kbd">qqbot-people.json</span>。点一下就把他加进主人名单（名字 + 已知 openid 一起加）。</p>
+      <div class="chips" id="peoplePool"></div>
+    </div>
+
+    <div class="savebar">
+      <button class="primary" id="btnSaveOwners">保存指令权限</button>
+      <span class="msg" id="ownersMsg"></span>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+
+<div class="allow-modal" id="allowModal" hidden>
+  <div class="allow-box">
+    <div class="allow-head">
+      <strong>收图 / 放图名单</strong>
+      <input type="text" id="allowSearch" placeholder="搜人…" />
+      <button class="small ghost" id="allowClose">关闭</button>
+    </div>
+    <div class="allow-list" id="allowList"></div>
+    <div class="allow-foot">
+      <span class="muted">勾选的人发图会按分类归档；梗图 / 表情包排除。</span>
+      <span style="flex:1"></span>
+      <button class="small primary" id="allowSave">保存</button>
+      <button class="small ghost" id="allowCancel">取消</button>
+    </div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox">
+  <div class="box">
+    <img id="lightboxImg" alt="" />
+    <div class="lbmeta">
+      <strong id="lightboxCap"></strong>
+      <span id="lightboxMeta"></span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="small" id="lightboxCopy">复制路径</button>
+      <button class="small danger" id="lightboxDelete">删除这张</button>
+      <button class="small ghost" id="lightboxClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────── 状态 ───────────────────────────
+let OV = null;                 // /api/overview 的返回
+let modelDraft = null;         // { provider, model, reasoningEffort, routeReasoning }
+let personas = null;           // 人格数据（深拷贝）
+let baseMtime = { patch: 0, personas: 0 };
+let selectedKey = 'default';
+let ownersDraft = { openids: [], names: [] };
+let dirty = { model: false, personas: false, owners: false, people: false };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+function toast(text, kind = '') {
+  const el = $('toast');
+  el.textContent = text;
+  el.className = `toast show ${kind}`;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.className = 'toast'; }, 3200);
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'content-type': 'application/json' },
+    ...options,
+  });
+  let body = null;
+  try { body = await res.json(); } catch { body = { ok: false, error: `HTTP ${res.status}` }; }
+  if (!res.ok || body.ok === false) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body;
+}
+
+// ─────────────────────────── 加载 ───────────────────────────
+async function load() {
+  try {
+    OV = await api('/api/overview');
+    baseMtime.patch = OV.mtimes.patch;
+    baseMtime.personas = OV.mtimes.personas;
+    modelDraft = {
+      provider: OV.model.provider || (OV.providers[0] ?? ''),
+      model: OV.model.model || '',
+      reasoningEffort: OV.model.reasoningEffort || '',
+      routeReasoning: OV.route?.reasoning || '',
+    };
+    ownersDraft = {
+      openids: [...(OV.owners?.openids ?? [])],
+      names: [...(OV.owners?.names ?? [])],
+    };
+    personas = clone(OV.personas);
+    if (!personas.modules) personas.modules = {};
+    if (!personas.personas) personas.personas = {};
+    if (!personas.archetypes) personas.archetypes = {};
+    selectedKey = 'default';
+    dirty = { model: false, personas: false, owners: false, people: false };
+    galleryLoaded = false;
+    galleryAllowLoaded = false;
+    galleryItems = [];
+    try { await loadPeopleData(); }
+    catch (err) { peopleLoaded = false; toast(`读取群成员档案失败：${err.message}`, 'err'); }
+    try {
+      const modulesRes = await api('/api/modules');
+      personModules = modulesRes.people && typeof modulesRes.people === 'object' ? modulesRes.people : {};
+      moduleSkills = Array.isArray(modulesRes.skills) ? modulesRes.skills : [];
+    }
+    catch { personModules = {}; moduleSkills = []; }
+    renderAll();
+    if (!$('paneGallery').hidden) void loadGallery();
+  }
+  catch (err) {
+    $('botText').textContent = '读取失败';
+    toast(`读取配置失败：${err.message}`, 'err');
+  }
+}
+
+function renderAll() {
+  $('cfgPath').textContent = OV.paths.patch.replace(/^.*\/\.dsh\//, '~/.dsh/');
+  renderBot();
+  renderModelTab();
+  renderPersonaTab();
+  renderOwners();
+  renderPeopleTab();
+  renderGalleryFilters();
+}
+
+function renderBot() {
+  const pill = $('botPill');
+  const running = OV.bot.running;
+  pill.className = `pill ${running ? 'on' : 'off'}`;
+  $('botText').textContent = running ? `运行中 · PID ${OV.bot.pids.join(', ')}` : '未运行';
+}
+
+// ─────────────────────────── 模型与推理 ───────────────────────────
+const supportOf = (modelId) => (OV.effortSupport && OV.effortSupport[modelId]) || null;
+const routeOf = (provider) => (OV.routes || []).find((r) => r.provider === provider) ?? null;
+
+function renderModelTab() {
+  const providers = OV.providers ?? [];
+  $('selProvider').innerHTML = providers.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+  $('selProvider').value = modelDraft.provider;
+
+  const route = routeOf(modelDraft.provider);
+  const external = route?.external === true;   // 插件注册的 provider（our-free-model）
+  const models = route?.models ?? [];
+  $('selModel').innerHTML = models.map((m) => `<option value="${esc(m.id)}">${esc(m.id)} — ${esc(m.name)}</option>`).join('');
+  if (!models.some((m) => m.id === modelDraft.model)) modelDraft.model = models[0]?.id ?? '';
+  $('selModel').value = modelDraft.model;
+
+  $('routeName').textContent = modelDraft.provider;
+
+  // 顶部警示
+  const alerts = [];
+  if (OV.warnings?.length) alerts.push(`<div class="alert warn">⚠ ${OV.warnings.map(esc).join('<br>⚠ ')}</div>`);
+  if (external) alerts.push('<div class="alert info">这个 provider 由 dsh-our-free-model 插件提供：模型清单和可用性随插件探测刷新，换模型后点「重启机器人」生效；它没有 llm-pi-ai 里的「路由默认推理强度」，只用上面的默认推理强度。</div>');
+  const picked = (route?.models ?? []).find((m) => m.id === modelDraft.model);
+  if (external && picked?.lane === 'opencode') alerts.push('<div class="alert warn">⚠ 这是 OpenCode 免费车道：额度按出口 IP 统计，用尽时上游直接回 429，机器人会「不说话」。额度没恢复前，建议选 Kilo 免费池的模型（kilo-auto/free 等）。</div>');
+  if (!OV.bot.running) alerts.push('<div class="alert err">机器人当前没在运行，点右上角「重启机器人」拉起来。</div>');
+  if (dirty.model) alerts.push('<div class="alert info">模型/推理强度的改动还没保存。</div>');
+  $('modelAlerts').innerHTML = alerts.join('');
+
+  // 档位下拉
+  const levels = supportOf(modelDraft.model);
+  const options = [['', '（不设置，交给模型默认）']];
+  if (levels) for (const l of levels) options.push([l, l]);
+  else for (const l of OV.allEfforts) options.push([l, l]);
+  // 当前配置值如果这个模型不支持，也要列出来（标红提示），否则下拉会「假装」是空
+  const withCurrent = (current) => {
+    const list = options.slice();
+    if (current && !list.some(([v]) => v === current)) list.push([current, `${current}（当前设置，模型不支持）`]);
+    return list;
+  };
+  const effortOpts = withCurrent(modelDraft.reasoningEffort);
+  const routeOpts = withCurrent(modelDraft.routeReasoning);
+  $('selEffort').innerHTML = effortOpts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+  $('selEffort').value = modelDraft.reasoningEffort;
+  $('selRouteEffort').innerHTML = routeOpts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+  $('selRouteEffort').value = modelDraft.routeReasoning;
+  $('selRouteEffort').disabled = external;
+
+  // 支持档位 chips
+  if (levels) {
+    $('effortChips').innerHTML = OV.allEfforts
+      .filter((l) => l !== 'minimal' && l !== 'xhigh' || levels.includes(l))
+      .map((l) => `<span class="chip ${levels.includes(l) ? 'ok' : 'bad'}">${esc(l)}</span>`)
+      .join('');
+    $('modelMeta').textContent = levels.length
+      ? `${modelDraft.model || '—'} · 支持 ${levels.join(' / ')}`
+      : `${modelDraft.model || '—'} · 无推理档位，请选择「不设置」`;
+  }
+  else {
+    $('effortChips').innerHTML = '<span class="chip">这个模型没在内置档位表里，按服务商实际支持为准</span>';
+    $('modelMeta').textContent = `${modelDraft.model || '—'} · 档位未知`;
+  }
+
+  // 矩阵
+  const rows = (route?.models ?? []).map((m) => {
+    const lv = supportOf(m.id);
+    if (!modelDraft.routeReasoning || !lv) {
+      return `<tr><td class="mono">${esc(m.id)}</td><td class="muted">${lv ? lv.join(' / ') : '未知'}</td><td class="muted">${modelDraft.routeReasoning ? '—' : '不设置'}</td></tr>`;
+    }
+    const ok = lv.includes(modelDraft.routeReasoning);
+    return `<tr><td class="mono">${esc(m.id)}</td><td class="muted">${esc(lv.join(' / '))}</td>
+      <td class="${ok ? 'ok' : 'bad'}">${ok ? '✓ 支持' : '✗ 不支持'}</td></tr>`;
+  }).join('');
+  $('matrix').innerHTML = external
+    ? '<tbody><tr><td class="muted">our-free-model 是插件路由，没有「路由默认推理强度」这一层；每个模型的档位由插件按模型自身声明下发，面板不猜。</td></tr></tbody>'
+    : `<thead><tr><th>模型</th><th>支持的档位</th><th>路由默认「${esc(modelDraft.routeReasoning || '未设置')}」</th></tr></thead><tbody>${rows}</tbody>`;
+
+  $('btnSaveModel').disabled = !dirty.model;
+  $('btnSaveRestart').disabled = !dirty.model;
+  if (!dirty.model) $('modelMsg').textContent = '';
+
+  // 事件（重渲染后重新绑定）
+  $('selProvider').onchange = (e) => {
+    modelDraft.provider = e.target.value;
+    modelDraft.model = '';
+    modelDraft.routeReasoning = routeOf(e.target.value)?.reasoning ?? '';
+    dirty.model = true;
+    renderModelTab();
+  };
+  $('selModel').onchange = (e) => { modelDraft.model = e.target.value; dirty.model = true; renderModelTab(); };
+  $('selEffort').onchange = (e) => { modelDraft.reasoningEffort = e.target.value; dirty.model = true; renderModelTab(); };
+  $('selRouteEffort').onchange = (e) => { modelDraft.routeReasoning = e.target.value; dirty.model = true; renderModelTab(); };
+}
+
+async function saveModel(opts = {}) {
+  const btn = $('btnSaveModel');
+  const btnRestart = $('btnSaveRestart');
+  const msg = $('modelMsg');
+  btn.disabled = true; btnRestart.disabled = true;
+  msg.className = 'msg'; msg.textContent = opts.restart ? '保存并重启中…' : '保存中…';
+  try {
+    const levels = supportOf(modelDraft.model);
+    if (levels && modelDraft.reasoningEffort && !levels.includes(modelDraft.reasoningEffort))
+      throw new Error(`模型 ${modelDraft.model} 不支持推理强度「${modelDraft.reasoningEffort}」`);
+    if (levels && modelDraft.routeReasoning && !levels.includes(modelDraft.routeReasoning))
+      throw new Error(`模型 ${modelDraft.model} 不支持路由默认「${modelDraft.routeReasoning}」，用到它会报错`);
+
+    const res = await api('/api/model', {
+      method: 'PUT',
+      body: JSON.stringify({ ...modelDraft, baseMtimeMs: baseMtime.patch }),
+    });
+    baseMtime.patch = res.mtimeMs;
+    dirty.model = false;
+    const backupName = res.backup.split('/').pop();
+    if (opts.restart) {
+      await doRestart(`已保存（备份：${backupName}）并重启`);
+      msg.className = 'msg ok';
+      msg.textContent = `已写入（备份：${backupName}）· 已重启`;
+      return;
+    }
+    toast('模型配置已保存，记得重启机器人', 'ok');
+    await refreshBot();
+    renderModelTab();
+    // renderModelTab 会清空提示，所以保存结果放在它之后写
+    msg.className = 'msg ok';
+    msg.textContent = `已写入（备份：${backupName}）· 重启机器人后生效`;
+  }
+  catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+    toast(err.message, 'err');
+  }
+  finally { btn.disabled = !dirty.model; btnRestart.disabled = !dirty.model; }
+}
+
+// ─────────────────────────── 私有凭据（仅状态，不回显） ───────────────────────────
+const credentialFields = [
+  { key: 'QQBOT_APPID', title: 'QQ 机器人 AppID', hint: '从 QQ 开放平台机器人管理页获取。', qq: true, type: 'text' },
+  { key: 'QQBOT_SECRET', title: 'QQ 机器人密钥', hint: '机器人 Client Secret，不是个人 QQ 密码。', qq: true },
+  { key: 'OPENAI_API_KEY', title: 'OpenAI', hint: 'OpenAI 官方聊天与已接入的相关功能；按官方 API 计费。' },
+  { key: 'DEEPSEEK_API_KEY', title: 'DeepSeek', hint: 'DeepSeek API 路由及相关搜索/读取功能，是否需要取决于当前配置。' },
+  { key: 'XIANGXIN_API_KEY', title: '象信 AI（可选）', hint: '供已启用的结构化判断 / 门控功能使用。' },
+  { key: 'OPENCODE_GO_API_KEY', title: 'OpenCode Go（可选）', hint: '现有部分辅助判断或对应模型路由可能依赖，不是免费模型通行证。' },
+];
+let credentialsLoaded = false;
+let credentialsBusy = false;
+let credentialsDirty = false;
+function credentialInput(key) { return $(`credential-${key}`); }
+function credentialRemove(key) { return $(`credential-remove-${key}`); }
+function clearCredentialInputs() {
+  for (const { key } of credentialFields) {
+    credentialInput(key).value = '';
+    credentialInput(key).disabled = false;
+    credentialRemove(key).checked = false;
+  }
+  credentialsDirty = false;
+}
+function updateCredentialSaveButton() {
+  $('btnSaveCredentials').disabled = credentialsBusy || !credentialsLoaded || !credentialsDirty;
+}
+function renderCredentialFields() {
+  for (const qq of [true, false]) {
+    $(qq ? 'qqCredentialFields' : 'apiCredentialFields').innerHTML = credentialFields.filter((f) => Boolean(f.qq) === qq).map((f) => `
+      <div class="field">
+        <label for="credential-${f.key}">${esc(f.title)} <span class="mono">${f.key}</span></label>
+        <span class="sub" id="credential-status-${f.key}">尚未读取状态</span>
+        <input type="${f.type || 'password'}" id="credential-${f.key}" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="8192" placeholder="留空保留；输入新值以替换本地副本" aria-describedby="credential-status-${f.key}" />
+        <span class="sub">${esc(f.hint)}</span>
+        <label><input type="checkbox" id="credential-remove-${f.key}" /> 保存时删除本地副本（不能删除继承环境变量）</label>
+      </div>`).join('');
+  }
+  for (const { key } of credentialFields) {
+    credentialInput(key).oninput = () => { credentialsDirty = true; updateCredentialSaveButton(); };
+    credentialRemove(key).onchange = () => {
+      credentialInput(key).disabled = credentialRemove(key).checked;
+      if (credentialRemove(key).checked) credentialInput(key).value = '';
+      credentialsDirty = true;
+      updateCredentialSaveButton();
+    };
+  }
+}
+function showCredentialStatus(result) {
+  // Accept only the documented presence/source shape, not arbitrary values from a response.
+  const labels = { local: '已配置 · 本地私有文件', environment: '已配置 · 继承环境变量（优先使用）', missing: '未配置' };
+  for (const { key } of credentialFields) {
+    const item = result?.keys?.[key];
+    if (!item || typeof item.configured !== 'boolean' || !Object.hasOwn(labels, item.source)
+      || item.configured !== (item.source !== 'missing')) throw new Error('Invalid credential status');
+  }
+  for (const { key } of credentialFields) {
+    const item = result.keys[key];
+    $(`credential-status-${key}`).textContent = labels[item.source];
+    $(`credential-status-${key}`).style.color = item.configured ? 'var(--ok)' : 'var(--muted)';
+  }
+}
+async function loadCredentials() {
+  if (credentialsBusy) return;
+  credentialsBusy = true; updateCredentialSaveButton();
+  $('credentialsMsg').className = 'msg';
+  $('credentialsMsg').textContent = '读取状态中…';
+  try {
+    const result = await api('/api/credentials', { cache: 'no-store' });
+    showCredentialStatus(result);
+    clearCredentialInputs();
+    credentialsLoaded = true;
+    $('credentialsMsg').textContent = '已读取状态；已有值不会回显。';
+    $('credentialsAlerts').textContent = '';
+  } catch {
+    credentialsLoaded = false;
+    $('credentialsMsg').className = 'msg err';
+    $('credentialsMsg').textContent = '读取密钥状态失败，请检查面板服务及本地文件权限后重试。';
+  } finally { credentialsBusy = false; updateCredentialSaveButton(); }
+}
+async function saveCredentials(event) {
+  event.preventDefault();
+  if (credentialsBusy || !credentialsLoaded || !credentialsDirty) return;
+  const values = {};
+  const remove = [];
+  for (const { key } of credentialFields) {
+    if (credentialRemove(key).checked) remove.push(key);
+    else if (credentialInput(key).value.trim()) values[key] = credentialInput(key).value;
+  }
+  credentialsBusy = true;
+  updateCredentialSaveButton();
+  $('credentialsMsg').className = 'msg';
+  $('credentialsMsg').textContent = '保存中…';
+  // Clear typed secrets immediately, including on network failure. Never persist them in browser storage.
+  clearCredentialInputs();
+  try {
+    const result = await api('/api/credentials', { method: 'PUT', cache: 'no-store', body: JSON.stringify({ values, remove }) });
+    showCredentialStatus(result);
+    $('credentialsMsg').className = 'msg ok';
+    $('credentialsMsg').textContent = '已保存本地配置；停止旧机器人后，在同一 profile 环境中运行 npm run bot 生效。继承环境变量仍优先。';
+    $('credentialsAlerts').textContent = '保存不会自动启动、切换模型或清除继承环境。右上角重启按钮仅适用于已显式配置的 macOS launchd 服务；首次使用请按部署指南启动。';
+    toast('凭据已保存，请重启机器人', 'ok');
+  } catch {
+    credentialsLoaded = false;
+    $('credentialsMsg').className = 'msg err';
+    $('credentialsMsg').textContent = '保存未确认成功，输入已清空；请刷新状态检查结果，必要时重新填写。';
+  } finally {
+    for (const key of Object.keys(values)) delete values[key];
+    credentialsBusy = false;
+    updateCredentialSaveButton();
+  }
+}
+renderCredentialFields();
+$('credentialsForm').onsubmit = saveCredentials;
+$('btnReloadCredentials').onclick = () => {
+  if (credentialsDirty && !confirm('刷新会清空尚未保存的输入和删除选择，继续？')) return;
+  void loadCredentials();
+};
+
+// ─────────────────────────── 人格 ───────────────────────────
+function personaKeys() {
+  // 默认、通配、以及每个群（元数据里有名字），再补上数据里有但元数据缺的 key
+  const keys = ['default', '*'];
+  for (const g of OV.groups ?? []) keys.push(g.id);
+  for (const k of Object.keys(personas.personas ?? {})) if (!keys.includes(k)) keys.push(k);
+  return keys;
+}
+
+function groupName(key) {
+  if (key === 'default') return '默认人格';
+  if (key === '*') return '通配（* 未单独配置的群）';
+  const g = (OV.groups ?? []).find((x) => x.id === key);
+  return g?.name ?? '未知群';
+}
+
+function effectiveEntry(key) {
+  return personas.personas?.[key] ?? personas.personas?.['*'] ?? personas.personas?.default ?? null;
+}
+
+function inheritedFrom(key) {
+  if (key === 'default' || key === '*') return null;   // 这两份是最底层，没有可继承的对象
+  if (personas.personas?.[key]) return null;
+  if (personas.personas?.['*']) return '*';
+  return 'default';
+}
+
+function entryModules(key) {
+  const entry = effectiveEntry(key);
+  if (!entry) return [];
+  return Array.isArray(entry) ? entry.slice() : (entry.modules ?? []).slice();
+}
+
+function entryArchetype(key) {
+  const entry = effectiveEntry(key);
+  return Array.isArray(entry) ? '' : (entry.archetype ?? '');
+}
+
+function setEntry(key, { modules, archetype }) {
+  personas.personas[key] = { modules, ...(archetype ? { archetype } : {}) };
+  dirty.personas = true;
+}
+
+function renderPersonaTab() {
+  // 左侧列表
+  $('plist').innerHTML = personaKeys().map((key) => {
+    const own = Boolean(personas.personas?.[key]);
+    const from = inheritedFrom(key);
+    const badge = own ? '<span class="badge own">独立</span>' : `<span class="badge">继承 ${esc(from === '*' ? '通配' : '默认')}</span>`;
+    const idx = OV.wakeIndex?.map?.[key];
+    const idxBadge = idx === undefined ? '' : `<span class="badge">唤醒 ${idx}</span>`;
+    const label = key === 'default' || key === '*' ? groupName(key) : `${esc(groupName(key))}`;
+    const sub = key === 'default' || key === '*' ? '' : `<span class="id">${esc(key.slice(0, 8))}…</span>`;
+    return `<li data-key="${esc(key)}" class="${key === selectedKey ? 'active' : ''}">
+      <span>${label} ${sub}</span><span>${idxBadge}${badge}</span></li>`;
+  }).join('');
+  for (const li of $('plist').children) {
+    li.onclick = () => { selectedKey = li.dataset.key; renderPersonaTab(); };
+  }
+
+  const key = selectedKey;
+  const own = Boolean(personas.personas?.[key]);
+  const from = inheritedFrom(key);
+  const isBase = key === 'default' || key === '*';
+  $('personaTitle').textContent = `${groupName(key)}${key !== 'default' && key !== '*' ? ` · ${key}` : ''}`;
+  $('personaHint').innerHTML = own
+    ? '这份人格有独立内容，编辑后保存即生效。'
+    : isBase
+      ? '还没有配置这份人格，点右上角「新建人格」从空模板开始。'
+      : (from ? `当前继承自「${from === '*' ? '通配' : '默认人格'}」；点「启用独立人格」才会为它单独存一份。` : '还没有任何人格数据。');
+
+  $('btnOwn').textContent = isBase ? '新建人格' : '启用独立人格';
+  $('btnOwn').hidden = own;
+  $('btnInherit').hidden = !own || isBase;
+
+  // 唤醒指数（只对具体群有意义；默认人格/通配不分群）
+  const wakeDefault = OV.wakeIndex?.default ?? 100;
+  const wakeVal = OV.wakeIndex?.map?.[key] ?? wakeDefault;
+  $('wakeRow').hidden = isBase;
+  $('wakeHint').hidden = isBase;
+  if (!isBase) {
+    $('wakeRange').value = String(wakeVal);
+    $('wakeValue').textContent = String(wakeVal);
+    $('wakeHint').textContent = wakeVal >= 100
+      ? '默认：没被点名也照常接话（跟以前一样）。'
+      : `比默认安静：没被点名时，约 ${wakeVal}% 的消息会主动接；有人 @ 她或叫「小易」不受影响。`;
+    $('wakeRange').oninput = () => { $('wakeValue').textContent = $('wakeRange').value; };
+    $('wakeRange').onchange = () => { void saveWakeIndex(Number($('wakeRange').value)); };
+  }
+
+  // archetype
+  const archetypes = Object.keys(personas.archetypes ?? {});
+  $('selArchetype').innerHTML = `<option value="">（不用人格类型）</option>`
+    + archetypes.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+  $('selArchetype').value = own ? entryArchetype(key) : '';
+  $('selArchetype').disabled = !own;
+
+  // 模块顺序
+  const mods = entryModules(key);
+  const allIds = Object.keys(personas.modules ?? {});
+  $('moduleList').innerHTML = mods.map((id, i) => {
+    const text = personas.modules?.[id] ?? '';
+    return `<li>
+      <span class="name">${esc(id)}</span>
+      <span class="preview">${esc(text.replace(/\s+/g, ' ').slice(0, 70))}</span>
+      <span class="ops">
+        <button class="mini" data-op="up" data-i="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="mini" data-op="down" data-i="${i}" ${i === mods.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="mini danger" data-op="rm" data-i="${i}">✕</button>
+      </span></li>`;
+  }).join('') || '<li class="muted">（空人格）</li>';
+
+  $('moduleList').onclick = (e) => {
+    const btn = e.target.closest('button[data-op]');
+    if (!btn) return;
+    if (!own) return toast('先点「启用独立人格」再改模块', 'err');
+    const list = entryModules(key);
+    const i = Number(btn.dataset.i);
+    const op = btn.dataset.op;
+    if (op === 'up' && i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]];
+    if (op === 'down' && i < list.length - 1) [list[i + 1], list[i]] = [list[i], list[i + 1]];
+    if (op === 'rm') list.splice(i, 1);
+    setEntry(key, { modules: list, archetype: $('selArchetype').value });
+    renderPersonaTab();
+  };
+
+  // 追加模块
+  $('selAddModule').innerHTML = allIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+  $('btnAddModule').disabled = !own || allIds.length === 0;
+
+  // 复制到
+  const targets = personaKeys().filter((k) => k !== key);
+  $('selCopyTo').innerHTML = targets.map((k) => `<option value="${esc(k)}">${esc(groupName(k))}</option>`).join('');
+  $('btnCopy').disabled = !own || targets.length === 0;
+
+  // 模块库
+  $('moduleCount').textContent = `${allIds.length} 个模块`;
+  $('moduleEditor').innerHTML = allIds.map((id) => {
+    const text = personas.modules?.[id] ?? '';
+    return `<details class="mod" data-id="${esc(id)}">
+      <summary><span class="mono">${esc(id)}</span><span class="muted" style="font-size:11px">${text.length} 字</span></summary>
+      <div class="body">
+        <div class="meta">
+          <span class="mono">${esc(id)}</span>
+          <button class="mini" data-act="rename">重命名</button>
+          <button class="mini danger" data-act="del">删除</button>
+        </div>
+        <textarea data-text="${esc(id)}" rows="8">${esc(text)}</textarea>
+      </div></details>`;
+  }).join('') || '<div class="muted">还没有模块，点「+ 新建模块」开始。</div>';
+
+  $('moduleEditor').oninput = (e) => {
+    const ta = e.target.closest('textarea[data-text]');
+    if (!ta) return;
+    personas.modules[ta.dataset.text] = ta.value;
+    dirty.personas = true;
+    const li = ta.closest('details').querySelector('summary .muted');
+    if (li) li.textContent = `${ta.value.length} 字`;
+    renderPreview(key);
+    markPersonaDirty();
+  };
+  $('moduleEditor').onclick = (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    e.preventDefault();
+    const id = btn.closest('details').dataset.id;
+    if (btn.dataset.act === 'rename') {
+      const next = prompt(`把模块 ${id} 改名为：`, id);
+      if (!next || next === id) return;
+      if (personas.modules[next] !== undefined) return toast('这个名字已经被占用了', 'err');
+      personas.modules[next] = personas.modules[id];
+      delete personas.modules[id];
+      for (const [k, entry] of Object.entries(personas.personas)) {
+        const list = Array.isArray(entry) ? entry : entry.modules;
+        const at = list.indexOf(id);
+        if (at !== -1) list[at] = next;
+        if (Array.isArray(entry)) personas.personas[k] = list;
+      }
+      dirty.personas = true;
+      renderPersonaTab(); markPersonaDirty();
+    }
+    if (btn.dataset.act === 'del') {
+      const users = Object.entries(personas.personas).filter(([, entry]) => {
+        const list = Array.isArray(entry) ? entry : entry.modules; return list.includes(id);
+      }).map(([k]) => groupName(k));
+      if (users.length && !confirm(`模块 ${id} 正被这些地方使用：\n${users.join('、')}\n\n删除后会从它们的顺序里一并移除，继续？`)) return;
+      delete personas.modules[id];
+      for (const [k, entry] of Object.entries(personas.personas)) {
+        const list = Array.isArray(entry) ? entry : entry.modules;
+        const at = list.indexOf(id);
+        if (at !== -1) list.splice(at, 1);
+        if (Array.isArray(entry)) personas.personas[k] = list;
+      }
+      dirty.personas = true;
+      renderPersonaTab(); markPersonaDirty();
+    }
+  };
+
+  $('selArchetype').onchange = (e) => {
+    if (!own) return;
+    const mods = entryModules(key);
+    if (e.target.value) setEntry(key, { modules: mods, archetype: e.target.value });
+    else { personas.personas[key] = { modules: mods }; dirty.personas = true; }
+    renderPreview(key); markPersonaDirty();
+  };
+
+  $('btnOwn').onclick = () => {
+    const from = inheritedFrom(key);
+    const list = entryModules(from ?? 'default');
+    const arch = from ? entryArchetype(from) : '';
+    setEntry(key, { modules: list, archetype: arch });
+    renderPersonaTab(); markPersonaDirty();
+  };
+  $('btnInherit').onclick = () => {
+    if (!confirm('删掉这个群的独立人格，恢复继承默认？')) return;
+    delete personas.personas[key];
+    dirty.personas = true;
+    renderPersonaTab(); markPersonaDirty();
+  };
+  $('btnAddModule').onclick = () => {
+    const id = $('selAddModule').value;
+    if (!id) return;
+    setEntry(key, { modules: [...entryModules(key), id], archetype: $('selArchetype').value });
+    renderPersonaTab(); markPersonaDirty();
+  };
+  $('btnCopy').onclick = () => {
+    const target = $('selCopyTo').value;
+    if (!target) return;
+    if (!confirm(`把这个群的人格覆盖到「${groupName(target)}」？`)) return;
+    setEntry(target, { modules: entryModules(key), archetype: $('selArchetype').value });
+    renderPersonaTab(); markPersonaDirty();
+  };
+  $('btnNewModule').onclick = () => {
+    const id = prompt('新模块 id（建议 角色.用途，例如 cat.identity）：', 'new.module');
+    if (!id) return;
+    if (personas.modules[id] !== undefined) return toast('已存在同名模块', 'err');
+    personas.modules[id] = '';
+    dirty.personas = true;
+    renderPersonaTab(); markPersonaDirty();
+    const el = $('moduleEditor').querySelector(`details[data-id="${CSS.escape(id)}"]`);
+    if (el) { el.open = true; el.querySelector('textarea').focus(); }
+  };
+
+  renderPreview(key);
+  $('btnSavePersona').disabled = !dirty.personas;
+  if (!dirty.personas) $('personaMsg').textContent = '';
+}
+
+function renderPreview(key) {
+  const mods = entryModules(key);
+  const parts = mods.map((id) => personas.modules?.[id]).filter((t) => typeof t === 'string' && t.trim() !== '');
+  const arch = entryArchetype(key);
+  if (arch && personas.archetypes?.[arch]) parts.push(personas.archetypes[arch]);
+  const text = parts.join('\n\n');
+  $('preview').textContent = text || '（这个群现在没有可用的人格文本，会回落到插件 config.groupPrompt）';
+  $('previewHint').textContent = `拼接顺序 = 模块顺序 → 人格类型 → 【群聊行为守则】（插件内置，所有群共用）。当前 ${parts.length} 段，共 ${text.length} 字。`;
+}
+
+function markPersonaDirty() {
+  const msg = $('personaMsg');
+  msg.className = 'msg warn';
+  msg.textContent = '有未保存的改动';
+  $('btnSavePersona').disabled = false;
+}
+
+async function saveWakeIndex(value) {
+  const key = selectedKey;
+  try {
+    const res = await api('/api/wake-index', {
+      method: 'PUT',
+      body: JSON.stringify({ groupOpenid: key, value, baseMtimeMs: OV.wakeIndex?.mtimeMs ?? 0 }),
+    });
+    OV.wakeIndex = { ...(OV.wakeIndex ?? {}), map: res.map, mtimeMs: res.mtimeMs };
+    renderPersonaTab();
+    toast(`「${groupName(key)}」唤醒指数已设为 ${value}，无需重启`, 'ok');
+  }
+  catch (err) {
+    toast(err.message, 'err');
+    renderPersonaTab();   // 失败时把滑块滚回磁盘上的值
+  }
+}
+
+async function savePersonas() {
+  const btn = $('btnSavePersona');
+  const msg = $('personaMsg');
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = '保存中…';
+  try {
+    const res = await api('/api/personas', {
+      method: 'PUT',
+      body: JSON.stringify({ data: personas, baseMtimeMs: baseMtime.personas }),
+    });
+    baseMtime.personas = res.mtimeMs;
+    dirty.personas = false;
+    toast('人格已保存，无需重启', 'ok');
+    renderPersonaTab();
+    msg.className = 'msg ok';
+    msg.textContent = `已保存（备份：${res.backup.split('/').pop()}）· 下一轮回复就生效`;
+  }
+  catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+    toast(err.message, 'err');
+  }
+  finally { btn.disabled = !dirty.personas; }
+}
+
+// ─────────────────────────── 指令权限 ───────────────────────────
+function renderOwners() {
+  const ids = ownersDraft.openids;
+  const names = ownersDraft.names;
+  $('ownerIds').innerHTML = ids.length
+    ? ids.map((id) => `<span class="chip ok">${esc(id)}<button class="mini" data-rm-id="${esc(id)}" title="移除">×</button></span>`).join('')
+    : '<span class="muted">（空）现在谁都不能用指令</span>';
+  $('ownerNames').innerHTML = names.length
+    ? names.map((n) => `<span class="chip ok">${esc(n)}<button class="mini" data-rm-name="${esc(n)}" title="移除">×</button></span>`).join('')
+    : '<span class="muted">（空）</span>';
+  const people = (OV.people ?? []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+  $('peoplePool').innerHTML = people.length
+    ? people.map((p) => `<button class="chip${names.includes(p.name) ? ' ok' : ''}" data-person="${esc(p.name)}" title="${esc((p.openids ?? []).join(', ') || '还没有 openid')}">${esc(p.name)}</button>`).join('')
+    : '<span class="muted">还没有成员档案</span>';
+  $('ownersAlert').innerHTML = (ids.length === 0 && names.length === 0)
+    ? '<div class="alert warn">名单是空的 —— 现在谁都发不了指令，包括你自己。</div>' : '';
+  $('btnSaveOwners').disabled = !dirty.owners;
+  if (!dirty.owners) $('ownersMsg').textContent = '';
+}
+
+function markOwnersDirty() {
+  dirty.owners = true;
+  const msg = $('ownersMsg');
+  msg.className = 'msg warn';
+  msg.textContent = '有未保存的改动';
+  renderOwners();
+}
+
+function addOwnerPerson(name) {
+  const person = (OV.people ?? []).find((p) => p.name === name);
+  if (!person) return;
+  if (!ownersDraft.names.includes(name)) ownersDraft.names.push(name);
+  for (const id of person.openids ?? []) {
+    if (!ownersDraft.openids.includes(id)) ownersDraft.openids.push(id);
+  }
+  markOwnersDirty();
+}
+
+async function saveOwners() {
+  const btn = $('btnSaveOwners');
+  const msg = $('ownersMsg');
+  btn.disabled = true; msg.className = 'msg'; msg.textContent = '保存中…';
+  try {
+    const res = await api('/api/owners', {
+      method: 'PUT',
+      body: JSON.stringify({ openids: ownersDraft.openids, names: ownersDraft.names }),
+    });
+    ownersDraft = { openids: res.openids, names: res.names };
+    OV.owners = { openids: res.openids, names: res.names };
+    dirty.owners = false;
+    renderOwners();
+    msg.className = 'msg ok';
+    msg.textContent = `已保存（备份：${res.backup.split('/').pop()}）· 下一条指令就按新名单判断`;
+    toast('指令权限已保存，无需重启', 'ok');
+  }
+  catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+    toast(err.message, 'err');
+  }
+  finally { btn.disabled = !dirty.owners; }
+}
+
+// ─────────────────────────── 机器人进程 ───────────────────────────
+async function refreshBot() {
+  try {
+    const s = await api('/api/bot/status');
+    OV.bot.running = s.running;
+    OV.bot.pids = s.pids;
+    renderBot();
+  }
+  catch { /* 状态查询失败不影响主流程 */ }
+}
+
+// 重启：不用 window.confirm —— 浏览器/WebView 可能直接吞掉弹窗，
+// 表现就是「点了右上角没反应」。改成两次点击确认，任何环境都能用。
+let restartArmed = false;
+let restartArmTimer = 0;
+
+async function doRestart(doneLabel) {
+  const btn = $('btnRestart');
+  restartArmed = false;
+  clearTimeout(restartArmTimer);
+  btn.disabled = true; btn.textContent = '重启中…';
+  try {
+    const res = await api('/api/bot/restart', { method: 'POST' });
+    OV.bot.running = res.running;
+    OV.bot.pids = res.pids;
+    renderBot();
+    const ready = res.ready === true;
+    toast(ready ? `${doneLabel ?? '已重启并就绪'}：PID ${res.pids.join(', ')}` : '进程已拉起，但没等到 Bot ready，看日志', ready ? 'ok' : 'err');
+    // 有没保存的草稿时不要整页重载，否则草稿会被冲掉
+    if (dirty.model || dirty.personas || dirty.owners) await refreshBot();
+    else await load();     // overview 一起刷新（模型、路径、状态）
+    return ready;
+  }
+  catch (err) {
+    toast(`重启失败：${err.message}`, 'err');
+    return false;
+  }
+  finally {
+    btn.disabled = false;
+    btn.textContent = '重启机器人';
+    const msg = $('modelMsg');
+    if (msg && msg.className.includes('ok')) msg.textContent += ` · PID ${OV.bot.pids.join(', ') || '?'}`;
+  }
+}
+
+function restartBot() {
+  const btn = $('btnRestart');
+  if (btn.disabled) return;
+  if (!restartArmed) {
+    restartArmed = true;
+    btn.textContent = '再点一次确认重启';
+    clearTimeout(restartArmTimer);
+    restartArmTimer = setTimeout(() => {
+      restartArmed = false;
+      btn.textContent = '重启机器人';
+    }, 4000);
+    return;
+  }
+  void doRestart();
+}
+
+// ─────────────────────────── 群成员档案 ───────────────────────────
+const PEOPLE_ALL = 'ALL';
+const PEOPLE_GLOBAL = 'GLOBAL';
+const P_PROFILE_FIELDS = [
+  ['gender', '性别'], ['age', '年龄'], ['height', '身高'], ['education', '学历'],
+  ['identity', '职业'], ['city', '城市'], ['personality', '性格'], ['health', '身体状况'],
+  ['status', '近况'], ['background', '经历'], ['habits', '习惯'], ['other', '其他'],
+];
+let peopleStore = { people: [] };
+let peopleGroups = [];
+let peopleMtime = 0;
+let peopleCurrent = -1;
+let peopleFilter = PEOPLE_ALL;
+let peopleQuery = '';
+let peopleLoaded = false;
+let personModules = {};
+let moduleSkills = [];
+
+const pEl = (tag, attrs = {}, children = []) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null) node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) node.append(c instanceof Node ? c : document.createTextNode(c ?? ''));
+  return node;
+};
+
+const pGroupLabel = (gid) => peopleGroups.find((g) => g.id === gid)?.name ?? String(gid ?? '').slice(0, 6);
+const pGroupsOf = (person) => (Array.isArray(person?.groups) ? person.groups.filter((g) => typeof g === 'string' && g) : []);
+const pIsGlobal = (person) => pGroupsOf(person).length === 0;
+const pInGroup = (person, gid) => gid === PEOPLE_ALL
+  ? true
+  : gid === PEOPLE_GLOBAL
+    ? pIsGlobal(person)
+    : (pIsGlobal(person) || pGroupsOf(person).includes(gid));
+const pNamesOf = (person) => {
+  const out = [person?.name, person?.addressing];
+  for (const key of Object.keys(person ?? {})) if (/^nickname\d+$/.test(key)) out.push(person[key]);
+  if (Array.isArray(person?.aliases)) out.push(...person.aliases);
+  if (Array.isArray(person?.openids)) out.push(...person.openids);
+  return out.filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim());
+};
+const pSearchText = (person) => pNamesOf(person).join(' ').toLowerCase();
+const pFilteredIndexes = () => {
+  const out = [];
+  peopleStore.people.forEach((person, index) => {
+    if (pInGroup(person, peopleFilter)) out.push(index);
+  });
+  return out;
+};
+const pSocialOf = (person) => {
+  const social = person?.social && typeof person.social === 'object' ? person.social : null;
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 10) / 10 : d);
+  const out = social
+    ? {
+        affinity: num(social.affinity, 50),
+        familiarity: num(social.familiarity, 30),
+        trust: num(social.trust, 50),
+        irritation: num(social.irritation, 0),
+        banter: num(social.banterTolerance, 25),
+      }
+    : { affinity: num(person?.affinity, 50), familiarity: 30, trust: 50, irritation: 0, banter: 25 };
+  const tiers = [[85, '老朋友'], [65, '很熟'], [45, '熟人'], [25, '聊过几次'], [10, '见过几次'], [0, '不熟']];
+  out.relation = (tiers.find(([min]) => out.familiarity >= min) ?? tiers[tiers.length - 1])[1];
+  out.attitude = out.irritation >= 85 ? '很差' : out.irritation >= 60 ? '冷淡' : out.irritation >= 35 ? '有点烦' : out.affinity >= 65 ? '友好' : '中性';
+  return out;
+};
+const pGroupText = (person) => {
+  const groups = pGroupsOf(person);
+  return groups.length ? groups.map(pGroupLabel).join('、') : '全局';
+};
+const pCard = (title, children) => pEl('div', { class: 'card' }, [
+  pEl('h2', {}, title),
+  ...[].concat(children).filter(Boolean),
+]);
+const pField = (label, value, oninput, opts = {}) => {
+  const input = opts.textarea
+    ? pEl('textarea', {})
+    : pEl('input', { type: 'text' });
+  input.value = value ?? '';
+  input.addEventListener('input', (event) => oninput(event.target.value));
+  return pEl('div', { class: 'field' }, [pEl('label', {}, label), input]);
+};
+const pCheckField = (label, checked, onchange, hint) => {
+  const input = pEl('input', { type: 'checkbox' });
+  input.checked = !!checked;
+  input.addEventListener('change', (event) => onchange(event.target.checked));
+  return pEl('div', { class: 'field', style: 'grid-column:1/-1;margin-top:14px' }, [
+    pEl('label', { class: 'check' }, [input, pEl('span', {}, label)]),
+    hint ? pEl('p', { class: 'hint', style: 'margin:0' }, hint) : null,
+  ].filter(Boolean));
+};
+
+function pSetStatus(text, cls = '') {
+  const toolbar = $('peopleStatus');
+  if (toolbar) {
+    toolbar.textContent = text;
+    toolbar.className = `msg ${cls}`;
+  }
+  const formMsg = $('peopleMsg');
+  if (formMsg) {
+    formMsg.textContent = text;
+    formMsg.className = `msg ${cls}`;
+  }
+  const save = $('btnSavePeople');
+  if (save) save.disabled = !dirty.people;
+}
+function pMarkDirty() {
+  dirty.people = true;
+  pSetStatus('有未保存的修改', 'warn');
+}
+
+async function loadPeopleData() {
+  const [peopleRes, groupsRes] = await Promise.all([api('/api/people'), api('/api/groups')]);
+  peopleStore = peopleRes.data && Array.isArray(peopleRes.data.people) ? peopleRes.data : { people: [] };
+  peopleMtime = Number(peopleRes.mtimeMs) || 0;
+  peopleGroups = Array.isArray(groupsRes.groups) ? groupsRes.groups : [];
+  peopleLoaded = true;
+  dirty.people = false;
+  const visible = pFilteredIndexes();
+  peopleCurrent = visible.length ? visible[0] : -1;
+}
+
+async function savePeople() {
+  try {
+    const res = await api('/api/people', {
+      method: 'PUT',
+      body: JSON.stringify({ data: peopleStore, baseMtimeMs: peopleMtime }),
+    });
+    peopleMtime = Number(res.mtimeMs) || peopleMtime;
+    dirty.people = false;
+    OV.people = peopleStore.people.map((person) => ({
+      name: person.name,
+      openids: Array.isArray(person.openids) ? person.openids : [],
+      groups: pGroupsOf(person),
+    }));
+    renderOwners();
+    renderPeopleTab();
+    pSetStatus(`已保存 ${res.count} 人`, 'ok');
+    toast(`群成员档案已保存（备份：${String(res.backup ?? '').split('/').pop() || '已生成'}）`, 'ok');
+  }
+  catch (err) {
+    pSetStatus(`保存失败：${err.message}`, 'err');
+    toast(`保存失败：${err.message}`, 'err');
+  }
+}
+
+async function saveGroupsMeta() {
+  const res = await api('/api/groups', { method: 'PUT', body: JSON.stringify({ groups: peopleGroups }) });
+  peopleGroups = Array.isArray(res.groups) ? res.groups : peopleGroups;
+  OV.groups = peopleGroups.map((group) => ({ id: group.id, name: group.name }));
+  renderPersonaTab();
+  renderPeopleTab();
+}
+
+async function reloadPeopleArchive() {
+  if (dirty.people && !confirm('档案有未保存的修改，重新读取会丢弃它们，继续？')) return;
+  try {
+    await loadPeopleData();
+    renderPeopleTab();
+    pSetStatus('已重新读取', 'ok');
+  }
+  catch (err) {
+    pSetStatus(`读取失败：${err.message}`, 'err');
+  }
+}
+
+function renderPeopleTab() {
+  if (!peopleLoaded) {
+    const form = $('memberForm');
+    if (form) form.innerHTML = '<div class="empty">档案读取失败，点右上角「重新读取」重试</div>';
+    return;
+  }
+  renderPeopleGroupChips();
+  renderPeopleList();
+  renderMemberForm();
+  renderGroupManage();
+  if (!dirty.people) pSetStatus(`已读取 ${peopleStore.people.length} 人`, '');
+}
+
+function renderPeopleGroupChips() {
+  const box = $('peopleGroupChips');
+  box.innerHTML = '';
+  const entries = [
+    { key: PEOPLE_ALL, label: '全部', count: peopleStore.people.length },
+    ...peopleGroups.map((group) => ({
+      key: group.id,
+      label: group.name,
+      count: peopleStore.people.filter((person) => pInGroup(person, group.id)).length,
+    })),
+    { key: PEOPLE_GLOBAL, label: '全局', count: peopleStore.people.filter(pIsGlobal).length },
+  ];
+  for (const entry of entries) {
+    box.append(pEl('button', {
+      class: `gchip ${peopleFilter === entry.key ? 'active' : ''}`,
+      onclick: () => {
+        peopleFilter = entry.key;
+        const visible = pFilteredIndexes();
+        peopleCurrent = visible.length ? visible[0] : -1;
+        renderPeopleTab();
+      },
+    }, [entry.label, pEl('span', { class: 'n' }, String(entry.count))]));
+  }
+}
+
+function renderPeopleList() {
+  const ul = $('peopleList');
+  ul.innerHTML = '';
+  const query = peopleQuery.trim().toLowerCase();
+  let visible = pFilteredIndexes();
+  if (query) visible = visible.filter((index) => pSearchText(peopleStore.people[index]).includes(query));
+  if (!visible.includes(peopleCurrent)) peopleCurrent = visible.length ? visible[0] : -1;
+  $('peopleCount').textContent = `${visible.length} / ${peopleStore.people.length}`;
+  if (visible.length === 0) {
+    ul.append(pEl('li', { class: 'empty' }, query ? '没有匹配的角色' : '这个群还没有角色'));
+    return;
+  }
+  for (const index of visible) {
+    const person = peopleStore.people[index];
+    const flags = [];
+    if (person.dailyFirstReply === true) flags.push('必接');
+    const mod = personModules[person.name];
+    if (mod?.collectImages?.enabled) flags.push('收图');
+    if (mod?.topics?.enabled) flags.push('主题');
+    if (mod?.style?.enabled) flags.push('风格');
+    if (pIsGlobal(person)) flags.push('全局');
+    if (person.autoCreated === true) flags.push('空壳');
+    ul.append(pEl('li', {
+      class: index === peopleCurrent ? 'active' : '',
+      onclick: () => {
+        peopleCurrent = index;
+        renderPeopleList();
+        renderMemberForm();
+      },
+    }, [
+      pEl('div', { class: 'nmline' }, [
+        pEl('span', { class: 'nm' }, person.name || '(未命名)'),
+        flags.length
+          ? pEl('span', { class: 'flags' }, flags.map((flag) => pEl('span', { class: `flag ${flag === '必接' ? 'on' : ''}` }, flag)))
+          : null,
+      ].filter(Boolean)),
+      pEl('span', { class: 'sub' }, person.addressing || (pIsGlobal(person) ? '全局' : pGroupLabel(pGroupsOf(person)[0])) || ''),
+    ]));
+  }
+}
+
+function renderGroupManage() {
+  const box = $('groupManageList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (peopleGroups.length === 0) {
+    box.append(pEl('p', { class: 'hint' }, '还没有群，先加一个。'));
+    return;
+  }
+  for (const group of peopleGroups) {
+    box.append(pEl('div', { class: 'gmrow' }, [
+      pEl('strong', {}, group.name),
+      pEl('span', { class: 'gid' }, group.id),
+      pEl('span', { class: 'grow' }),
+      pEl('button', {
+        class: 'mini',
+        onclick: () => groupSessionAction(group, 'new'),
+      }, '新会话'),
+      pEl('button', {
+        class: 'mini',
+        onclick: () => groupSessionAction(group, 'compact'),
+      }, '压缩'),
+      pEl('button', {
+        class: 'mini',
+        onclick: async () => {
+          const name = prompt('群名', group.name);
+          if (name === null) return;
+          const trimmed = name.trim();
+          if (!trimmed) return;
+          group.name = trimmed;
+          try { await saveGroupsMeta(); toast('群名已保存', 'ok'); }
+          catch (err) { toast(`保存群名失败：${err.message}`, 'err'); }
+        },
+      }, '改名'),
+      pEl('button', {
+        class: 'mini danger',
+        onclick: async () => {
+          if (!confirm(`删除群「${group.name}」？\n绑定到这个群的角色会变成不绑群（对所有群生效）。`)) return;
+          peopleGroups = peopleGroups.filter((item) => item.id !== group.id);
+          for (const person of peopleStore.people) {
+            if (!Array.isArray(person.groups)) continue;
+            const rest = person.groups.filter((gid) => gid !== group.id);
+            if (rest.length) person.groups = rest;
+            else delete person.groups;
+          }
+          if (peopleFilter === group.id) peopleFilter = PEOPLE_ALL;
+          pMarkDirty();
+          try {
+            await saveGroupsMeta();
+            await savePeople();
+            toast(`已删除群「${group.name}」，成员绑定也已保存`, 'ok');
+          }
+          catch (err) { toast(`删除失败：${err.message}`, 'err'); }
+        },
+      }, '删'),
+    ]));
+  }
+  box.append(pEl('p', { class: 'hint', style: 'margin:6px 0 0' },
+    '「新会话」会清空该群当前上下文；长期记忆、档案、关系值不受影响。「压缩」保留摘要。'));
+}
+
+async function groupSessionAction(group, action) {
+  if (action === 'new' && !confirm(`给「${group.name}」开新会话？\n当前对话上下文会清空，长期记忆和档案不受影响。`)) return;
+  try {
+    const res = await api('/api/groups/session', {
+      method: 'POST',
+      body: JSON.stringify({ groupOpenid: group.id, action }),
+    });
+    if (action === 'new') {
+      toast(`已给「${group.name}」开新会话`, 'ok');
+      return;
+    }
+    const outcome = res.outcome ?? {};
+    if (outcome.ok) {
+      toast(outcome.shadowed ? `已压缩「${group.name}」${outcome.shadowed} 条历史` : `「${group.name}」没有可压缩的历史`, 'ok');
+    }
+    else {
+      const reason = { 'no-session': '当前没有活跃会话', busy: '正在生成，稍后再试', unavailable: '压缩能力不可用' }[outcome.reason] ?? (outcome.reason ?? '未知原因');
+      toast(`压缩「${group.name}」失败：${reason}`, 'err');
+    }
+  }
+  catch (err) {
+    toast(`群操作失败：${err.message}`, 'err');
+  }
+}
+
+async function addPeopleGroup() {
+  const id = $('newGroupId').value.trim();
+  const name = $('newGroupName').value.trim();
+  if (!id || !name) { toast('group_openid 和群名都要填', 'err'); return; }
+  if (peopleGroups.some((group) => group.id === id)) { toast('这个群已经存在了', 'err'); return; }
+  peopleGroups.push({ id, name });
+  try {
+    await saveGroupsMeta();
+    $('newGroupId').value = '';
+    $('newGroupName').value = '';
+    peopleFilter = id;
+    renderPeopleTab();
+    toast(`已新增群：${name}`, 'ok');
+  }
+  catch (err) { toast(`加群失败：${err.message}`, 'err'); }
+}
+
+function pGroupsSection(person) {
+  const groupChips = peopleGroups.map((group) => pEl('button', {
+    class: 'gchip',
+    title: group.id,
+    onclick: () => {
+      const set = new Set(pGroupsOf(person));
+      set.add(group.id);
+      person.groups = Array.from(set);
+      pMarkDirty();
+      renderPeopleTab();
+    },
+  }, group.name));
+  groupChips.push(pEl('button', {
+    class: 'gchip',
+    onclick: () => {
+      delete person.groups;
+      pMarkDirty();
+      renderPeopleTab();
+    },
+  }, '设为全局（清空）'));
+  return pEl('div', { style: 'margin-top:14px' }, [
+    pField('生效群（group_openid，逗号分隔；留空 = 所有群）', pGroupsOf(person).join(', '), (value) => {
+      const list = value.split(',').map((item) => item.trim()).filter(Boolean);
+      if (list.length) person.groups = list;
+      else delete person.groups;
+      pMarkDirty();
+    }, { textarea: true }),
+    pEl('div', { class: 'groups-list' }, groupChips),
+    pEl('p', { class: 'hint' }, '点群名把它加进「生效群」；留空表示所有群都能认出这个人。'),
+  ]);
+}
+
+function pNumberedSection(title, prefix, person, labelPrefix) {
+  const keys = Object.keys(person)
+    .filter((key) => key.indexOf(prefix) === 0 && key.length > prefix.length && String(Number(key.slice(prefix.length))) !== 'NaN')
+    .sort((a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length)));
+  const rows = pEl('div', { class: 'rows' });
+  for (const key of keys) {
+    const input = pEl('input', {
+      type: 'text',
+      oninput: (event) => { person[key] = event.target.value; pMarkDirty(); },
+    });
+    input.value = person[key] ?? '';
+    rows.append(pEl('div', { class: 'row' }, [
+      pEl('span', { class: 'rowlabel' }, labelPrefix + key.slice(prefix.length)),
+      input,
+      pEl('button', {
+        class: 'small danger',
+        onclick: () => { delete person[key]; pMarkDirty(); renderMemberForm(); },
+      }, '删除'),
+    ]));
+  }
+  const next = keys.length
+    ? Math.max(...keys.map((key) => Number(key.slice(prefix.length)))) + 1
+    : 1;
+  return pEl('div', { style: 'margin-top:14px' }, [
+    pEl('div', { class: 'row row-between' }, [
+      pEl('label', {}, title),
+      pEl('button', {
+        class: 'small',
+        onclick: () => { person[prefix + next] = ''; pMarkDirty(); renderMemberForm(); },
+      }, `＋ 加${labelPrefix}`),
+    ]),
+    rows,
+  ]);
+}
+
+function pListSection(title, target, key, label) {
+  if (!Array.isArray(target[key])) target[key] = target[key] ? [String(target[key])] : [];
+  const list = target[key];
+  const rows = pEl('div', { class: 'rows' });
+  list.forEach((value, index) => {
+    const input = pEl('input', {
+      type: 'text',
+      oninput: (event) => { list[index] = event.target.value; pMarkDirty(); },
+    });
+    input.value = value;
+    rows.append(pEl('div', { class: 'row' }, [
+      pEl('span', { class: 'rowlabel' }, label + (index + 1)),
+      input,
+      pEl('button', {
+        class: 'small danger',
+        onclick: () => { list.splice(index, 1); pMarkDirty(); renderMemberForm(); },
+      }, '删除'),
+    ]));
+  });
+  return pEl('div', {}, [
+    pEl('div', { class: 'row row-between' }, [
+      pEl('label', {}, title),
+      pEl('button', {
+        class: 'small',
+        onclick: () => { target[key].push(''); pMarkDirty(); renderMemberForm(); },
+      }, `＋ 加${label}`),
+    ]),
+    rows,
+  ]);
+}
+
+function pRelationsSection(person) {
+  person.profile = person.profile || {};
+  const relations = person.profile.relations && typeof person.profile.relations === 'object'
+    ? person.profile.relations
+    : (person.profile.relations = {});
+  const rows = pEl('div', { class: 'rows' });
+  for (const key of Object.keys(relations)) {
+    const value = relations[key];
+    const text = Array.isArray(value) ? value.join('、') : String(value ?? '');
+    let currentKey = key;
+    const keyInput = pEl('input', { type: 'text', placeholder: '关系（弟弟/姐姐/好朋友）' });
+    keyInput.value = key;
+    keyInput.addEventListener('input', (event) => {
+      const nextKey = event.target.value;
+      if (nextKey === currentKey) return;
+      const old = currentKey;
+      currentKey = nextKey;
+      relations[nextKey] = relations[old];
+      delete relations[old];
+      pMarkDirty();
+    });
+    const valueInput = pEl('input', { type: 'text', placeholder: '对方名字（多个用、分隔）' });
+    valueInput.value = text;
+    valueInput.addEventListener('input', (event) => {
+      relations[currentKey] = event.target.value;
+      pMarkDirty();
+    });
+    rows.append(pEl('div', { class: 'row' }, [
+      keyInput,
+      valueInput,
+      pEl('button', {
+        class: 'small danger',
+        onclick: () => { delete relations[currentKey]; pMarkDirty(); renderMemberForm(); },
+      }, '删除'),
+    ]));
+  }
+  return pEl('div', { style: 'margin-top:10px' }, [
+    pEl('div', { class: 'row row-between' }, [
+      pEl('label', {}, '关系（每条一行，填写关系类型与对方名字）'),
+      pEl('button', {
+        class: 'small',
+        onclick: () => { relations['新关系'] = ''; pMarkDirty(); renderMemberForm(); },
+      }, '＋ 加关系'),
+    ]),
+    rows,
+  ]);
+}
+
+function pModulesSection(person) {
+  const fallback = {
+    collectImages: { enabled: false, categories: [] },
+    topics: { enabled: false, topics: [] },
+    style: { enabled: false, skill: '' },
+  };
+  const current = personModules[person.name] ?? fallback;
+  const draft = JSON.parse(JSON.stringify(current));
+  draft.collectImages = draft.collectImages ?? fallback.collectImages;
+  draft.topics = draft.topics ?? fallback.topics;
+  draft.style = draft.style ?? fallback.style;
+
+  const collectCats = pEl('input', { type: 'text', placeholder: '美食、人像、风景…（留空=除梗图/表情包外都收）' });
+  collectCats.value = (draft.collectImages.categories ?? []).join('、');
+  collectCats.disabled = !draft.collectImages.enabled;
+
+  const topicList = pEl('input', { type: 'text', placeholder: '游戏、电影、小说、链接…' });
+  topicList.value = (draft.topics.topics ?? []).join('、');
+  topicList.disabled = !draft.topics.enabled;
+
+  const skill = pEl('select');
+  const options = moduleSkills.length > 0 ? moduleSkills : [{ id: '', name: '（暂无角色技能）' }];
+  for (const item of options) {
+    const opt = pEl('option', { value: item.id }, item.name || item.id);
+    skill.append(opt);
+  }
+  if (draft.style.skill && !options.some((item) => item.id === draft.style.skill)) {
+    skill.append(pEl('option', { value: draft.style.skill }, draft.style.skill));
+  }
+  skill.value = draft.style.skill || '';
+  skill.disabled = !draft.style.enabled;
+
+  const save = pEl('button', { class: 'primary small', onclick: async () => {
+    const modules = {
+      collectImages: {
+        enabled: draft.collectImages.enabled,
+        categories: collectCats.value.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
+      },
+      topics: {
+        enabled: draft.topics.enabled,
+        topics: topicList.value.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
+      },
+      style: { enabled: draft.style.enabled, skill: skill.value },
+    };
+    try {
+      const res = await api('/api/modules', { method: 'PUT', body: JSON.stringify({ name: person.name, modules }) });
+      personModules[person.name] = res.modules;
+      galleryAllowLoaded = false;
+      toast('角色模块已保存', 'ok');
+      renderPeopleList();
+      renderMemberForm();
+    }
+    catch (err) {
+      toast(`保存模块失败：${err.message}`, 'err');
+    }
+  } }, '保存模块');
+
+  return pEl('div', {}, [
+    pEl('p', { class: 'hint', style: 'margin:-4px 0 8px' },
+      '三个模块按人勾选。收图会同步到图库的收图名单；语言风格会同步到角色技能；主题模块只在他分享图片/文字/链接时注入。'),
+    pCheckField('1. 收集图片（梗图 / 表情包自动跳过）', draft.collectImages.enabled, (checked) => {
+      draft.collectImages.enabled = checked;
+      collectCats.disabled = !checked;
+    }, '只收这个人的图；分类留空表示除梗图/表情包外都收。'),
+    pEl('div', { class: 'field' }, [pEl('label', {}, '收图分类（逗号/顿号分隔）'), collectCats]),
+    pCheckField('2. 回应主题（图片 / 文字 / 链接，先搜索再回复）', draft.topics.enabled, (checked) => {
+      draft.topics.enabled = checked;
+      topicList.disabled = !checked;
+    }, '他分享作品、游戏、电影、小说或链接时，先查口碑再评论；不收图。'),
+    pEl('div', { class: 'field' }, [pEl('label', {}, '关注主题（可选）'), topicList]),
+    pCheckField('3. 用特定语言方式回应', draft.style.enabled, (checked) => {
+      draft.style.enabled = checked;
+      skill.disabled = !checked;
+    }, '选一个角色技能；只对这个人生效。'),
+    pEl('div', { class: 'field' }, [pEl('label', {}, '语言风格'), skill]),
+    pEl('div', { style: 'margin-top:12px' }, [save]),
+  ]);
+}
+
+function renderMemberForm() {
+  const form = $('memberForm');
+  form.innerHTML = '';
+  const person = peopleStore.people[peopleCurrent];
+  if (!person) {
+    form.append(pEl('div', { class: 'empty' }, '← 先在左侧选一个角色'));
+    return;
+  }
+  person.profile = person.profile || {};
+  const social = pSocialOf(person);
+
+  const head = pEl('div', { class: 'form-head' }, [
+    pEl('div', { class: 'fh-main' }, [
+      pEl('div', { class: 'fh-name' }, person.name || '(未命名)'),
+      pEl('div', { class: 'fh-sub' }, [pGroupText(person), person.dailyFirstReply === true ? '必接' : '', person.autoCreated ? '自动建档' : ''].filter(Boolean).join(' · ')),
+    ]),
+    pEl('span', { class: 'grow' }),
+    pEl('span', { class: 'msg', id: 'peopleMsg' }, ''),
+    pEl('button', { class: 'small ghost', onclick: reloadPeopleArchive }, '重新读取'),
+    pEl('button', { class: 'primary', id: 'btnSavePeople', onclick: savePeople }, '保存档案'),
+  ]);
+
+  const basics = pCard('基本信息', [
+    pEl('div', { class: 'grid' }, [
+      pField('name（必填，主称呼）', person.name, (value) => {
+        person.name = value;
+        pMarkDirty();
+        const title = form.querySelector('.fh-name');
+        if (title) title.textContent = value || '(未命名)';
+      }),
+      pField('addressing（称呼：她叫你什么）', person.addressing, (value) => { person.addressing = value; pMarkDirty(); }),
+      pField('birthday（生日）', person.birthday, (value) => { person.birthday = value; pMarkDirty(); }),
+      pField('summary（一句话概括）', person.summary, (value) => { person.summary = value; pMarkDirty(); }),
+      pField('qq（仅展示）', person.qq, (value) => { person.qq = value; pMarkDirty(); }),
+      pField('openids（逗号分隔，稳定识别）', Array.isArray(person.openids) ? person.openids.join(', ') : '', (value) => {
+        const list = value.split(',').map((item) => item.trim()).filter(Boolean);
+        if (list.length) person.openids = list;
+        else delete person.openids;
+        pMarkDirty();
+      }),
+    ]),
+    pCheckField('每日首条必接：今天第一次出现时，无论亲疏都接一句', person.dailyFirstReply === true, (checked) => {
+      if (checked) person.dailyFirstReply = true;
+      else delete person.dailyFirstReply;
+      pMarkDirty();
+      renderPeopleList();
+    }, '勾上后：每天在每个群第一次露面，哪怕只发一个表情包 / 一张图也会接一句；如果这条是在诉苦，就不套问候，按关心来接。'),
+    pGroupsSection(person),
+    pNumberedSection('昵称（识别用，一个一行）', 'nickname', person, '昵称'),
+    pListSection('爱好（可多条）', person.profile, 'hobbies', '爱好'),
+    pListSection('雷区（可多条）', person.profile, 'dislikes', '雷区'),
+    pListSection('擅长（可多条）', person.profile, 'skills', '擅长'),
+    pListSection('宠物（可多只）', person.profile, 'pets', '宠物'),
+  ]);
+
+  const modulesCard = pCard('角色模块（按人勾选）', [pModulesSection(person)]);
+
+  const profileCard = pCard('档案字段（profile）', [
+    pEl('p', { class: 'hint', style: 'margin:-6px 0 10px' }, '爱好 / 雷区 / 擅长 / 宠物 已改为列表，在上方「基本信息」卡片里，每行一条可增删。'),
+    pEl('div', { class: 'grid' }, P_PROFILE_FIELDS.map(([key, label]) => pField(label, person.profile[key], (value) => {
+      person.profile[key] = value;
+      pMarkDirty();
+    }))),
+  ]);
+
+  const relationsCard = pCard('关系（relations）', [pRelationsSection(person)]);
+
+  const sources = person.sources && typeof person.sources === 'object' ? Object.entries(person.sources) : [];
+  const autoCard = pCard('自动记录（只读）', [
+    person.autoCreated ? pEl('p', { class: 'hint' }, '🤖 这条档案是机器人自动创建的（autoCreated）') : null,
+    pEl('p', { class: 'hint' }, `关系：${social.relation} ｜ 态度：${social.attitude}`),
+    pEl('p', { class: 'hint mono' }, `好感 ${social.affinity} · 熟悉 ${social.familiarity} · 信任 ${social.trust} · 烦躁 ${social.irritation} · 互损 ${social.banter}`),
+    pEl('p', { class: 'hint' }, '（数值只是内部状态，机器人看不到，它只看到上面那句关系描述）'),
+    sources.length
+      ? pEl('div', { class: 'rows' }, sources.map(([field, info]) => pEl('div', { class: 'row', style: 'align-items:flex-start' }, [
+          pEl('span', { style: 'width:150px;flex:0 0 auto;color:var(--muted);font-size:12px' }, field),
+          pEl('span', { style: 'flex:1;font-size:12px' }, String(info?.evidence ?? '(未注明)')),
+          pEl('span', { style: 'flex:0 0 auto;color:var(--muted);font-size:11px' }, String(info?.at ?? '').slice(0, 16).replace('T', ' ')),
+        ])))
+      : null,
+  ]);
+
+  const noteCard = pCard('备注与其他', [
+    pField('note（备注）', person.note, (value) => { person.note = value; pMarkDirty(); }, { textarea: true }),
+    pEl('div', { style: 'margin-top:12px' }, [
+      pEl('button', {
+        class: 'danger',
+        onclick: () => {
+          if (!confirm(`确定删除「${person.name || '未命名'}」吗？需要再点保存才会写入。`)) return;
+          peopleStore.people.splice(peopleCurrent, 1);
+          const visible = pFilteredIndexes();
+          peopleCurrent = visible.length ? visible[0] : -1;
+          pMarkDirty();
+          renderPeopleTab();
+        },
+      }, '删除这个人'),
+    ]),
+  ]);
+
+  const memoriesCard = pCard('最近记忆（长期记忆库，只读）', [
+    pEl('p', { class: 'hint', style: 'margin:-6px 0 10px' }, '来自 ltm.db 的最近 10 条；机器人对话时只会自动看到最新 5 条。'),
+    pEl('div', { id: 'personMemories', class: 'rows' }, [pEl('span', { class: 'hint' }, '加载中…')]),
+  ]);
+
+  form.append(head, pEl('div', { class: 'form-body' }, [basics, modulesCard, profileCard, relationsCard, autoCard, memoriesCard, noteCard]));
+  void loadPersonMemories(person);
+  const save = $('btnSavePeople');
+  if (save) save.disabled = !dirty.people;
+  if (dirty.people) {
+    const msg = $('peopleMsg');
+    if (msg) { msg.textContent = '有未保存的修改'; msg.className = 'msg warn'; }
+  }
+}
+
+function pAddPerson() {
+  const person = { name: '新成员', profile: {} };
+  if (peopleFilter !== PEOPLE_ALL && peopleFilter !== PEOPLE_GLOBAL) person.groups = [peopleFilter];
+  peopleStore.people.push(person);
+  peopleCurrent = peopleStore.people.length - 1;
+  pMarkDirty();
+  renderPeopleTab();
+}
+
+async function loadPersonMemories(person) {
+  const box = $('personMemories');
+  if (!box) return;
+  const gid = (peopleFilter !== PEOPLE_ALL && peopleFilter !== PEOPLE_GLOBAL)
+    ? peopleFilter
+    : (Array.isArray(person.groups) && person.groups.length ? person.groups[0] : '');
+  if (!gid || !person.name) {
+    box.innerHTML = '<span class="hint">这个角色还没绑定群</span>';
+    return;
+  }
+  try {
+    const res = await api(`/api/person-memories?gid=${encodeURIComponent(gid)}&name=${encodeURIComponent(person.name)}`);
+    const list = Array.isArray(res.memories) ? res.memories : [];
+    box.innerHTML = '';
+    if (list.length === 0) {
+      box.append(pEl('span', { class: 'hint' }, '这个群还没有关于 TA 的长期记忆'));
+      return;
+    }
+    for (const m of list) {
+      box.append(pEl('div', { class: 'row', style: 'align-items:flex-start' }, [
+        pEl('span', { style: 'flex:0 0 auto;color:var(--muted);font-size:11px;width:96px' }, String(m.at ?? '').slice(0, 16).replace('T', ' ')),
+        pEl('span', { style: 'flex:1;font-size:12px' }, String(m.text ?? '')),
+      ]));
+    }
+  }
+  catch (err) {
+    box.innerHTML = `<span class="hint">读取失败：${esc(err.message)}</span>`;
+  }
+}
+
+let eventsLoaded = false;
+let eventFilter = 'open';
+
+async function loadEvents() {
+  try {
+    const res = await api('/api/events');
+    eventsLoaded = true;
+    renderEvents(Array.isArray(res.events) ? res.events : []);
+    const status = $('eventsStatus');
+    if (status) status.textContent = `共 ${(res.events ?? []).length} 条`;
+  }
+  catch (err) {
+    toast(`读取事件失败：${err.message}`, 'err');
+  }
+}
+
+async function updateEvent(id, status) {
+  try {
+    await api('/api/events/update', { method: 'POST', body: JSON.stringify({ id, status }) });
+    await loadEvents();
+  }
+  catch (err) {
+    toast(`更新事件失败：${err.message}`, 'err');
+  }
+}
+
+function renderEvents(list) {
+  const box = $('eventList');
+  if (!box) return;
+  box.innerHTML = '';
+  const filters = [['open', '进行中'], ['done', '已完成'], ['dropped', '已放弃'], ['all', '全部']];
+  const chips = $('eventFilters');
+  chips.innerHTML = '';
+  for (const [key, label] of filters) {
+    const count = key === 'all' ? list.length : list.filter((e) => e.status === key).length;
+    chips.append(pEl('button', {
+      class: `gchip ${eventFilter === key ? 'active' : ''}`,
+      onclick: () => { eventFilter = key; renderEvents(list); },
+    }, [label, pEl('span', { class: 'n' }, String(count))]));
+  }
+  const visible = (eventFilter === 'all' ? list : list.filter((e) => e.status === eventFilter))
+    .slice().sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+  if (visible.length === 0) {
+    box.append(pEl('div', { class: 'empty' }, eventFilter === 'open' ? '没有进行中的事件' : '没有事件'));
+    return;
+  }
+  for (const e of visible) {
+    const isPlan = e.type === 'plan';
+    const when = new Date(Number(e.createdAt)).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const actions = [];
+    if (e.status === 'open') {
+      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'done') }, '完成'));
+      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'dropped') }, '放弃'));
+    }
+    else {
+      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'open') }, '重开'));
+    }
+    box.append(pEl('div', { class: 'row', style: 'align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(127,142,163,.15)' }, [
+      pEl('span', { style: 'flex:0 0 92px;font-size:12px;color:var(--muted)' }, String(e.person ?? '')),
+      pEl('span', { style: 'flex:0 0 64px;font-size:12px' }, isPlan ? (e.kind === 'long' ? '长期' : '短期') : `情绪·${e.emotion ?? ''}`),
+      pEl('span', { style: 'flex:1;font-size:13px' }, `${e.title ?? ''}${e.dueAt ? `（${e.dueAt}）` : ''}`),
+      pEl('span', { style: 'flex:0 0 150px;font-size:11px;color:var(--muted)' }, `${when} · 问过 ${e.askedCount ?? 0} 次`),
+      pEl('span', { style: 'flex:0 0 auto;display:flex;gap:6px' }, actions),
+    ]));
+  }
+}
+
+function pDuplicatePerson() {
+  const person = peopleStore.people[peopleCurrent];
+  if (!person) return;
+  const copy = JSON.parse(JSON.stringify(person));
+  copy.name = `${person.name || '未命名'} 副本`;
+  peopleStore.people.push(copy);
+  peopleCurrent = peopleStore.people.length - 1;
+  pMarkDirty();
+  renderPeopleTab();
+}
+
+
+// ─────────────────────────── 图库 ───────────────────────────
+let galleryLoaded = false;
+let galleryItems = [];
+let galleryLoading = false;
+let galleryTimer = 0;
+let lightboxItem = null;
+let gallerySelected = new Set();
+let galleryAllowLoaded = false;
+let allowDraft = new Map();
+
+function renderGalleryFilters() {
+  const groups = OV?.groups ?? [];
+  const select = $('galleryGroup');
+  const current = select.value;
+  select.innerHTML = '<option value="">全部群</option>'
+    + groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name || g.id.slice(0, 8))}</option>`).join('');
+  select.value = current;
+  const names = new Set();
+  for (const p of (peopleStore?.people ?? [])) {
+    if (p.addressing) names.add(p.addressing);
+    if (p.name) names.add(p.name);
+  }
+  for (const p of (OV?.people ?? [])) if (p.name) names.add(p.name);
+  $('galleryPeople').innerHTML = [...names].filter(Boolean)
+    .map((n) => `<option value="${esc(n)}"></option>`).join('');
+}
+
+function galleryQueryString() {
+  const params = new URLSearchParams();
+  const query = $('galleryQuery').value.trim();
+  const person = $('galleryPerson').value.trim();
+  const group = $('galleryGroup').value;
+  if (query) params.set('query', query);
+  if (person) params.set('person', person);
+  if (group) params.set('group', group);
+  if ($('galleryFavorites')?.checked) params.set('favorites', '1');
+  params.set('limit', '100');
+  return params.toString();
+}
+
+function renderAllowList() {
+  const box = $('allowList');
+  const filter = $('allowSearch').value.trim().toLowerCase();
+  box.innerHTML = '';
+  const names = [...allowDraft.keys()].filter((name) => filter === '' || name.toLowerCase().includes(filter));
+  if (names.length === 0) {
+    box.innerHTML = '<div class="gallery-empty">没有匹配的人</div>';
+    return;
+  }
+  for (const name of names) {
+    const state = allowDraft.get(name);
+    const check = pEl('input', { type: 'checkbox' });
+    check.checked = state.checked;
+    const cats = pEl('input', { type: 'text', class: 'cats', placeholder: '分类：美食 / 人像 / 风景…' });
+    cats.value = state.categories;
+    cats.disabled = !state.checked;
+    check.addEventListener('change', () => {
+      state.checked = check.checked;
+      cats.disabled = !check.checked;
+    });
+    cats.addEventListener('input', () => { state.categories = cats.value; });
+    box.append(pEl('div', { class: 'allow-row' }, [check, pEl('span', { class: 'nm' }, name), cats]));
+  }
+}
+
+async function openAllowEditor() {
+  try {
+    const res = await api('/api/media/allow');
+    const existing = new Map((Array.isArray(res.people) ? res.people : []).map((person) => [String(person.name ?? '').trim(), Array.isArray(person.categories) ? person.categories : []]));
+    const names = new Set();
+    for (const person of (peopleStore?.people ?? [])) if (person?.name) names.add(person.name);
+    for (const person of (OV?.people ?? [])) if (person?.name) names.add(person.name);
+    for (const name of existing.keys()) if (name) names.add(name);
+    allowDraft = new Map([...names].filter(Boolean).sort().map((name) => [name, {
+      checked: existing.has(name),
+      categories: (existing.get(name) ?? []).join('、'),
+    }]));
+    $('allowSearch').value = '';
+    renderAllowList();
+    $('allowModal').hidden = false;
+  }
+  catch (err) {
+    toast(`读取名单失败：${err.message}`, 'err');
+  }
+}
+
+async function saveAllowEditor() {
+  const people = [...allowDraft.entries()]
+    .filter(([, state]) => state.checked)
+    .map(([name, state]) => ({
+      name,
+      categories: state.categories.split(/[,，、\s]+/).map((item) => item.trim()).filter(Boolean),
+    }));
+  try {
+    await api('/api/media/allow', { method: 'PUT', body: JSON.stringify({ people }) });
+    $('allowModal').hidden = true;
+    galleryAllowLoaded = false;
+    await loadGalleryAllow();
+    toast(`名单已保存（${people.length} 人）`, 'ok');
+  }
+  catch (err) {
+    toast(`保存名单失败：${err.message}`, 'err');
+  }
+}
+
+async function loadGalleryAllow() {
+  if (galleryAllowLoaded) return;
+  try {
+    const res = await api('/api/media/allow');
+    const people = Array.isArray(res.people) ? res.people : [];
+    const label = people.map((person) => {
+      const name = String(person?.name ?? '').trim();
+      const cats = Array.isArray(person?.categories) ? person.categories.filter(Boolean) : [];
+      return name + (cats.length > 0 ? `（${cats.join(' / ')}）` : '');
+    }).filter(Boolean).join('、');
+    $('galleryAllowNote').textContent = label ? `收图/放图名单：${label}` : '收图/放图名单：空（在 qqbot-media-allow.json 里添加）';
+    galleryAllowLoaded = true;
+  }
+  catch {
+    $('galleryAllowNote').textContent = '收图/放图名单读取失败';
+  }
+}
+
+async function loadGallery() {
+  if (galleryLoading) return;
+  galleryLoading = true;
+  try {
+    const res = await api(`/api/media?${galleryQueryString()}`);
+    galleryItems = Array.isArray(res.items) ? res.items : [];
+    gallerySelected.clear();
+    galleryLoaded = true;
+    renderGallery();
+  }
+  catch (err) {
+    galleryItems = [];
+    galleryLoaded = false;
+    $('galleryGrid').innerHTML = `<div class="gallery-empty">读取失败：${esc(err.message)}</div>`;
+    $('galleryCount').textContent = '';
+    toast(`图库读取失败：${err.message}`, 'err');
+  }
+  finally {
+    galleryLoading = false;
+  }
+}
+
+function renderGallery() {
+  const grid = $('galleryGrid');
+  grid.innerHTML = '';
+  $('galleryCount').textContent = galleryItems.length ? `${galleryItems.length} 张` : '';
+  if (!galleryItems.length) {
+    grid.innerHTML = '<div class="gallery-empty">没有匹配的图片。换个关键词，或点「搜索」看全部。</div>';
+    updateGallerySelection();
+    return;
+  }
+  for (const item of galleryItems) {
+    const dt = new Date(item.createdAt);
+    const when = Number.isNaN(dt.getTime()) ? '' : `${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    const card = pEl('div', { class: `gcard${gallerySelected.has(item.id) ? ' selected' : ''}`, title: item.path, onclick: () => openLightbox(item) }, []);
+    const check = pEl('input', { type: 'checkbox', class: 'gcheck', title: '选择这张' });
+    check.checked = gallerySelected.has(item.id);
+    check.addEventListener('click', (event) => event.stopPropagation());
+    check.addEventListener('change', (event) => {
+      if (event.target.checked) gallerySelected.add(item.id);
+      else gallerySelected.delete(item.id);
+      card.classList.toggle('selected', event.target.checked);
+      updateGallerySelection();
+    });
+    card.append(
+      check,
+      pEl('img', {
+        src: `/api/media/file?id=${encodeURIComponent(item.id)}`,
+        alt: item.caption || '图片',
+        loading: 'lazy',
+        onerror: (event) => { event.target.style.opacity = '0.25'; },
+      }),
+      pEl('div', { class: 'cap' }, `${item.liked ? '⭐ ' : ''}${item.caption || '图片'}`),
+      pEl('div', { class: 'sub' }, [
+        pEl('span', {}, item.sender || '未知'),
+        pEl('span', {}, [item.group || '', when].filter(Boolean).join(' · ')),
+      ]),
+      ...(item.liked && item.reason ? [pEl('div', { class: 'sub', title: item.reason }, `收藏：${item.reason}`)] : []),
+    );
+    grid.append(card);
+  }
+  updateGallerySelection();
+}
+
+function updateGallerySelection() {
+  const count = gallerySelected.size;
+  const del = $('galleryDelete');
+  const all = $('gallerySelectAll');
+  if (del) {
+    del.disabled = count === 0;
+    del.textContent = count > 0 ? `删除选中 (${count})` : '删除选中';
+  }
+  if (all)
+    all.textContent = galleryItems.length > 0 && count === galleryItems.length ? '取消全选' : '全选';
+}
+
+async function deleteGallery(ids) {
+  const wanted = [...new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (wanted.length === 0) return;
+  if (!confirm(`确定删除选中的 ${wanted.length} 张图片？\n会同时删除媒体库里的文件，不可恢复。`)) return;
+  try {
+    const res = await api('/api/media/delete', { method: 'POST', body: JSON.stringify({ ids: wanted }) });
+    const gone = new Set(wanted);
+    galleryItems = galleryItems.filter((item) => !gone.has(item.id));
+    gallerySelected.clear();
+    if (lightboxItem && gone.has(lightboxItem.id)) closeLightbox();
+    renderGallery();
+    toast(`已删除 ${res.deleted ?? wanted.length} 张`, 'ok');
+  }
+  catch (err) {
+    toast(`删除失败：${err.message}`, 'err');
+  }
+}
+
+function openLightbox(item) {
+  lightboxItem = item;
+  $('lightboxImg').src = `/api/media/file?id=${encodeURIComponent(item.id)}`;
+  $('lightboxImg').alt = item.caption || '图片';
+  $('lightboxCap').textContent = item.caption || '图片';
+  $('lightboxMeta').textContent = [
+    item.liked ? '⭐ 已收藏' : '',
+    item.sender || '未知',
+    item.group || '',
+    item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN') : '',
+    item.reason ? `收藏理由：${item.reason}` : '',
+    item.tags ? `#${item.tags}` : '',
+  ].filter(Boolean).join(' · ');
+  $('lightbox').classList.add('show');
+}
+
+function closeLightbox() {
+  $('lightbox').classList.remove('show');
+  $('lightboxImg').removeAttribute('src');
+  lightboxItem = null;
+}
+
+function scheduleGallery() {
+  clearTimeout(galleryTimer);
+  galleryTimer = setTimeout(() => { galleryLoaded = false; void loadGallery(); }, 300);
+}
+
+$('tabGallery').onclick = () => switchTab('gallery');
+$('tabEvents').onclick = () => switchTab('events');
+$('btnReloadEvents').onclick = () => loadEvents();
+$('galleryAllowEdit').onclick = openAllowEditor;
+$('allowSearch').addEventListener('input', renderAllowList);
+$('allowSave').onclick = saveAllowEditor;
+$('allowCancel').onclick = () => { $('allowModal').hidden = true; };
+$('allowClose').onclick = () => { $('allowModal').hidden = true; };
+$('allowModal').addEventListener('click', (event) => { if (event.target === $('allowModal')) $('allowModal').hidden = true; });
+$('gallerySearch').onclick = () => { galleryLoaded = false; void loadGallery(); };
+$('galleryQuery').addEventListener('input', scheduleGallery);
+$('galleryPerson').addEventListener('input', scheduleGallery);
+$('galleryGroup').addEventListener('change', () => { galleryLoaded = false; void loadGallery(); });
+$('galleryFavorites').addEventListener('change', () => { galleryLoaded = false; void loadGallery(); });
+$('galleryQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); galleryLoaded = false; void loadGallery(); } });
+$('galleryPerson').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); galleryLoaded = false; void loadGallery(); } });
+$('gallerySelectAll').onclick = () => {
+  if (gallerySelected.size === galleryItems.length) gallerySelected.clear();
+  else for (const item of galleryItems) gallerySelected.add(item.id);
+  renderGallery();
+};
+$('galleryDelete').onclick = () => { void deleteGallery([...gallerySelected]); };
+$('lightboxDelete').onclick = () => { if (lightboxItem) void deleteGallery([lightboxItem.id]); };
+$('lightboxClose').onclick = closeLightbox;
+$('lightbox').addEventListener('click', (e) => { if (e.target === $('lightbox')) closeLightbox(); });
+$('lightboxCopy').onclick = async () => {
+  if (!lightboxItem?.path) return;
+  try {
+    await navigator.clipboard.writeText(lightboxItem.path);
+    toast('路径已复制', 'ok');
+  }
+  catch {
+    prompt('复制路径', lightboxItem.path);
+  }
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('lightbox').classList.contains('show')) closeLightbox(); });
+
+$('tabPeople').onclick = () => switchTab('people');
+$('peopleSearch').addEventListener('input', (event) => {
+  peopleQuery = event.target.value;
+  renderPeopleTab();
+});
+$('btnAddPerson').onclick = pAddPerson;
+$('btnDupPerson').onclick = pDuplicatePerson;
+$('btnGroupManage').onclick = () => {
+  const panel = $('groupManage');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) renderGroupManage();
+};
+$('btnCloseGroupManage').onclick = () => { $('groupManage').hidden = true; };
+$('btnAddGroup').onclick = addPeopleGroup;
+
+// ─────────────────────────── 事件绑定 ───────────────────────────
+$('tabModel').onclick = () => switchTab('model');
+$('tabCredentials').onclick = () => switchTab('credentials');
+$('tabPersona').onclick = () => switchTab('persona');
+$('tabOwners').onclick = () => switchTab('owners');
+function switchTab(which) {
+  if (which !== 'people' && dirty.people
+    && !confirm('群成员档案有未保存的修改，确定离开这个页签？')) return;
+  if (which !== 'credentials' && credentialsDirty && !$('paneCredentials').hidden) {
+    if (!confirm('密钥页有未保存的输入，离开会清空这些输入，继续？')) return;
+    clearCredentialInputs(); updateCredentialSaveButton();
+  }
+  $('tabCredentials').classList.toggle('active', which === 'credentials');
+  $('paneCredentials').hidden = which !== 'credentials';
+  if (which === 'credentials' && !credentialsLoaded) void loadCredentials();
+  $('tabModel').classList.toggle('active', which === 'model');
+  $('tabPersona').classList.toggle('active', which === 'persona');
+  $('tabPeople').classList.toggle('active', which === 'people');
+  $('tabGallery').classList.toggle('active', which === 'gallery');
+  $('tabEvents').classList.toggle('active', which === 'events');
+  $('tabOwners').classList.toggle('active', which === 'owners');
+  $('paneModel').hidden = which !== 'model';
+  $('panePersona').hidden = which !== 'persona';
+  $('panePeople').hidden = which !== 'people';
+  $('paneGallery').hidden = which !== 'gallery';
+  $('paneEvents').hidden = which !== 'events';
+  $('paneOwners').hidden = which !== 'owners';
+  if (which === 'people' && !peopleLoaded) {
+    void loadPeopleData().then(renderPeopleTab).catch((err) => toast(`读取群成员档案失败：${err.message}`, 'err'));
+  }
+  if (which === 'events') void loadEvents();
+  if (which === 'gallery') {
+    renderGalleryFilters();
+    void loadGalleryAllow();
+    if (!galleryLoaded) void loadGallery();
+  }
+}
+
+$('btnSaveModel').onclick = () => saveModel();
+$('btnSaveRestart').onclick = () => saveModel({ restart: true });
+$('btnSavePersona').onclick = savePersonas;
+$('btnSaveOwners').onclick = saveOwners;
+
+// 指令权限：增删
+$('ownerIds').onclick = (e) => {
+  const btn = e.target.closest('button[data-rm-id]');
+  if (!btn) return;
+  ownersDraft.openids = ownersDraft.openids.filter((id) => id !== btn.dataset.rmId);
+  markOwnersDirty();
+};
+$('ownerNames').onclick = (e) => {
+  const btn = e.target.closest('button[data-rm-name]');
+  if (!btn) return;
+  ownersDraft.names = ownersDraft.names.filter((n) => n !== btn.dataset.rmName);
+  markOwnersDirty();
+};
+$('peoplePool').onclick = (e) => {
+  const btn = e.target.closest('button[data-person]');
+  if (!btn) return;
+  addOwnerPerson(btn.dataset.person);
+};
+const bindAdd = (inputId, buttonId, apply) => {
+  const submit = () => {
+    const el = $(inputId);
+    const value = el.value.trim();
+    if (!value) return;
+    apply(value);
+    el.value = '';
+  };
+  $(buttonId).onclick = submit;
+  $(inputId).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+};
+bindAdd('newOwnerId', 'addOwnerId', (value) => {
+  if (!ownersDraft.openids.includes(value)) ownersDraft.openids.push(value);
+  markOwnersDirty();
+});
+bindAdd('newOwnerName', 'addOwnerName', (value) => {
+  if (!ownersDraft.names.includes(value)) ownersDraft.names.push(value);
+  markOwnersDirty();
+});
+$('btnRestart').onclick = restartBot;
+$('btnReload').onclick = () => {
+  if ((dirty.model || dirty.personas || dirty.owners || dirty.people || credentialsDirty) && !confirm('有未保存的改动，重新读取会丢弃它们，继续？')) return;
+  clearCredentialInputs(); updateCredentialSaveButton();
+  if (!$('paneCredentials').hidden) void loadCredentials();
+  load();
+};
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty.model || dirty.personas || dirty.owners || dirty.people || credentialsDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+load();
+</script>
+</body>
+</html>
