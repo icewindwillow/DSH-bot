@@ -497,8 +497,19 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
             globalAttempts = globalAttempts.filter((time) => now - time < 3600000);
             const conversation = `${grant.scope}:${grant.targetId}`;
             const history = attempts.get(conversation) ?? [];
-            if (history.length >= settings.maxPerHour || (history.length && now - history.at(-1) < settings.cooldownSeconds * 1000)
-                || globalAttempts.length >= 10) return result('rate_limited', '生图冷却或请求额度已用完。失败请求也计入尝试次数；不要自动重试。');
+            if (history.length >= settings.maxPerHour) {
+                console.log(`[im-qqbot] 生图被限流: 每会话每小时上限 ${settings.maxPerHour} 次已达（${conversation}）`);
+                return result('quota_exhausted', `这个会话这一小时的生图次数已用完（每小时 ${settings.maxPerHour} 次）；下个整点前不能再画。失败尝试也计数，不要自动重试。`);
+            }
+            const cooldownLeft = history.length ? Math.ceil((settings.cooldownSeconds * 1000 - (now - history.at(-1))) / 1000) : 0;
+            if (cooldownLeft > 0) {
+                console.log(`[im-qqbot] 生图被限流: 冷却中还需 ${cooldownLeft} 秒（${conversation}）`);
+                return result('cooldown', `生图冷却中，还要等 ${cooldownLeft} 秒；本轮没有发出请求，也不会计费。`);
+            }
+            if (globalAttempts.length >= 10) {
+                console.log('[im-qqbot] 生图被限流: 全进程每小时 10 次已达');
+                return result('quota_exhausted', '本进程这一小时的生图次数已达上限（10 次），稍后再试；不要自动重试。');
+            }
             // Reserve before any await. A failed/aborted/uncertain attempt consumes this inbound grant too.
             grant.used = true;
             attempts.set(conversation, [...history, now]);
@@ -524,11 +535,14 @@ function setupOpenAiImageTool(ctx, bot, manager, config, logger) {
                         ? { model: settings.model, prompt, image_size: settings.size }
                         : { prompt, steps: 4 };
                 const endpoint = provider.accountCredential ? provider.endpoint.replace('{account}', accountId) : provider.endpoint;
+                const startedAt = Date.now();
+                console.log(`[im-qqbot] 生图开始 provider=${provider.name} model=${settings.model} promptChars=${prompt.length}${rewritten ? ' rewritten' : ''}`);
                 const response = await fetch(endpoint, {
                     method: 'POST', redirect: 'error', signal,
                     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
                     body: JSON.stringify(requestBody),
                 });
+                console.log(`[im-qqbot] 生图响应 provider=${provider.name} status=${response.status} ms=${Date.now() - startedAt}`);
                 if (!response.ok) {
                     await response.body?.cancel();
                     if (response.status === 401 || response.status === 403) return result('access_denied', `${provider.label} 拒绝访问，请检查图片模型权限、账号验证和 Key；不会回显服务端内容或自动重试。`);

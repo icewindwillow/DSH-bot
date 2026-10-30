@@ -219,13 +219,27 @@ test('per-conversation cooldown/hourly attempts and process-wide hard cap apply 
   const f = fixture(t, { settings: { cooldownSeconds: 60, maxPerHour: 1 } });
   let now = Date.now(); Date.now = () => now;
   assert.equal((await f.run()).status, 'sent'); f.primary.inbound(); now += 61000;
-  assert.equal((await f.run()).status, 'rate_limited');
+  assert.equal((await f.run()).status, 'quota_exhausted');
   for (let i = 0; i < 9; i++) {
     const state = f.conversation('group', `synthetic-budget-${i}`);
     assert.equal((await f.run({ prompt: 'a whale' }, state.exec)).status, 'sent');
   }
   const last = f.conversation('group', 'synthetic-over-budget');
-  assert.equal((await f.run({ prompt: 'a whale' }, last.exec)).status, 'rate_limited'); assert.equal(f.requests.length, 10);
+  assert.equal((await f.run({ prompt: 'a whale' }, last.exec)).status, 'quota_exhausted'); assert.equal(f.requests.length, 10);
+});
+
+test('cooldown is reported as cooldown with remaining seconds, not as exhausted quota', async (t) => {
+  const f = fixture(t, { settings: { cooldownSeconds: 120, maxPerHour: 3 } });
+  let now = Date.now(); Date.now = () => now;
+  assert.equal((await f.run()).status, 'sent');
+  f.primary.inbound();
+  const second = await f.run();
+  assert.equal(second.status, 'cooldown');
+  assert.ok(/还要等 \d+ 秒/.test(second.message));
+  assert.equal(f.requests.length, 1, 'a cooldown must not reach the provider');
+  now += 121000; f.primary.inbound();
+  assert.equal((await f.run()).status, 'sent');
+  assert.equal(f.requests.length, 2);
 });
 
 test('one in-flight request blocks a different group without queueing; abort does not retry', async (t) => {
