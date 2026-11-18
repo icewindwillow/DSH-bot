@@ -186,12 +186,12 @@ test('image settings reject linked ancestors, dangling links, target links/hardl
 });
 
 test('image settings UI isolated block loads/saves settings only, validates limits and confirms paid opt-in', async () => {
-  const html = readFileSync(new URL('../bot-config-panel/public/index.html', import.meta.url), 'utf8');
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  new vm.Script(script);
+  const html = readFileSync(new URL('../bot-config-panel/public/app/pages/settings.html', import.meta.url), 'utf8');
+  const script = readFileSync(new URL('../bot-config-panel/public/app/app.js', import.meta.url), 'utf8');
   const start = script.indexOf('// ── 生图设置：');
   const end = script.indexOf('// ── 生图设置结束 ──', start);
-  assert.ok(start > script.indexOf('// ─────────────────────────── 人格') && end > start);
+  assert.ok(start >= 0 && end > start);
+  const isolatedScript = script.slice(start, end);
   const controls = new Map();
   const element = (id) => {
     if (!controls.has(id)) controls.set(id, { value: '', checked: false, disabled: false, textContent: '', className: '' });
@@ -211,7 +211,7 @@ test('image settings UI isolated block loads/saves settings only, validates limi
       return { ok: true, settings: { ...saved } };
     },
   };
-  vm.runInNewContext(`${script.slice(start, end)}\nglobalThis.ui = {loadImageGenerationSettings, saveImageGenerationSettings};`, sandbox);
+  vm.runInNewContext(`${isolatedScript}\nglobalThis.ui = {loadImageGenerationSettings, saveImageGenerationSettings};`, sandbox);
   assert.equal(element('btnSaveImageGeneration').disabled, true);
   assert.equal(calls.length, 0, 'rendering must not make remote or paid calls');
   await sandbox.ui.loadImageGenerationSettings();
@@ -231,7 +231,7 @@ test('image settings UI isolated block loads/saves settings only, validates limi
   element('imageTimeout').value = '29'; element('imageTimeout').oninput();
   const before = calls.length;
   await sandbox.ui.saveImageGenerationSettings({ preventDefault() {} });
-  assert.equal(calls.length, before, 'invalid cooldown must not be submitted');
+  assert.equal(calls.length, before, 'invalid timeout must not be submitted');
   element('imageTimeout').value = '180'; element('imageTimeout').oninput();
   fail = true;
   await sandbox.ui.saveImageGenerationSettings({ preventDefault() {} });

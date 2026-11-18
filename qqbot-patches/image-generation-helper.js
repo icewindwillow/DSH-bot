@@ -45,10 +45,12 @@ function qqbotImageProvider(model) {
 // 配置写在 qqbot-role-skills.json 顶层 imagePermission；缺文件或损坏按缺省值，不因此放开。
 const QQBOT_IMAGE_PERMISSION_DEFAULTS = Object.freeze({ affinityMin: 60, skill: 'image-gen' });
 
-function qqbotImageReadJson(profileDir, name) {
+const qqbotImageProfileReader = /* inline-profile-reader */ null;
+function qqbotImageReadPermissionDocument(profileDir, type) {
+    if (qqbotImageProfileReader) return qqbotImageProfileReader(profileDir, type);
     const fs = process.getBuiltinModule('node:fs');
     const path = process.getBuiltinModule('node:path');
-    const file = path.join(profileDir, name);
+    const file = path.join(profileDir, `qqbot-${type}.json`);
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4 * 1024 * 1024) throw new Error('unsafe permission source');
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -56,7 +58,7 @@ function qqbotImageReadJson(profileDir, name) {
 function qqbotImagePermission(profileDir) {
     const defaults = QQBOT_IMAGE_PERMISSION_DEFAULTS;
     try {
-        const raw = qqbotImageReadJson(profileDir, 'qqbot-role-skills.json')?.imagePermission;
+        const raw = qqbotImageReadPermissionDocument(profileDir, 'role-skills')?.imagePermission;
         const affinityMin = Number(raw?.affinityMin);
         const skill = typeof raw?.skill === 'string' && raw.skill.trim() !== '' ? raw.skill.trim() : defaults.skill;
         return {
@@ -74,7 +76,7 @@ function qqbotImageNames(person) {
 }
 function qqbotImagePerson(profileDir, senderId) {
     try {
-        const people = qqbotImageReadJson(profileDir, 'qqbot-people.json')?.people;
+        const people = qqbotImageReadPermissionDocument(profileDir, 'people')?.people;
         return (Array.isArray(people) ? people : []).find((person) => Array.isArray(person?.openids) && person.openids.includes(senderId));
     } catch { return undefined; }
 }
@@ -84,7 +86,7 @@ function qqbotImageAffinity(person) {
 }
 function qqbotImageIsOwner(profileDir, senderId, person) {
     let owners;
-    try { owners = qqbotImageReadJson(profileDir, 'qqbot-command-owners.json'); } catch { return false; }
+    try { owners = qqbotImageReadPermissionDocument(profileDir, 'command-owners'); } catch { return false; }
     if ((Array.isArray(owners?.openids) ? owners.openids : []).includes(senderId)) return true;
     const names = (Array.isArray(owners?.names) ? owners.names : []).map((name) => String(name).trim()).filter(Boolean);
     if (names.length === 0 || !person) return false;
@@ -94,7 +96,7 @@ function qqbotImageIsOwner(profileDir, senderId, person) {
 // （openid 或人名；groups 非空时还要命中群）。别的技能即使写了权限字段也不算。
 function qqbotImageRoleGrant(profileDir, gid, senderId, person, skillId) {
     let skills;
-    try { skills = qqbotImageReadJson(profileDir, 'qqbot-role-skills.json')?.skills; } catch { return undefined; }
+    try { skills = qqbotImageReadPermissionDocument(profileDir, 'role-skills')?.skills; } catch { return undefined; }
     const skill = (Array.isArray(skills) ? skills : []).find((item) => item && String(item.id ?? '') === skillId);
     if (!skill) return undefined;
     for (const audience of Array.isArray(skill.audiences) ? skill.audiences : []) {

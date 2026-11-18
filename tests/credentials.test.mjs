@@ -125,35 +125,39 @@ test('rejects oversized values and files; malformed file errors do not echo inpu
 });
 
 test('credential UI uses same-origin status API and never echoes saved or failed secret values', async () => {
-  const html = readFileSync(new URL('../bot-config-panel/public/index.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../bot-config-panel/public/app/pages/settings.html', import.meta.url), 'utf8');
+  const owners = readFileSync(new URL('../bot-config-panel/public/app/pages/owners.html', import.meta.url), 'utf8');
+  const people = readFileSync(new URL('../bot-config-panel/public/app/pages/people.html', import.meta.url), 'utf8');
   assert.ok(html.includes('id="paneCredentials"'));
-  assert.ok(html.includes('id="tabCredentials"'));
+  assert.ok(html.includes('id="credentialsForm"'));
   // Public examples remain generic; never put real identifiers into negative assertions.
-  assert.ok(html.includes('placeholder="输入主人名字，回车添加"'));
-  assert.ok(html.includes('placeholder="输入群名称"'));
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  new vm.Script(script); // Parse all browser code without executing the rest of the application.
+  assert.ok(owners.includes('placeholder="输入主人名字，回车添加"'));
+  assert.ok(people.includes('placeholder="输入群名称"'));
+  const script = readFileSync(new URL('../bot-config-panel/public/app/app.js', import.meta.url), 'utf8');
   const start = script.indexOf('const credentialFields = [');
-  const end = script.indexOf('// ─────────────────────────── 人格', start);
-  assert.ok(start > 0 && end > start);
+  const end = script.indexOf('// ── 生图设置：', start);
+  assert.ok(start >= 0 && end > start);
+  const isolatedScript = script.slice(start, end);
   const elements = new Map();
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, { value: '', checked: false, disabled: false, style: {}, textContent: '', innerHTML: '', className: '' });
     return elements.get(id);
   };
   const requests = [];
+  const toasts = [];
   let fail = false;
   const status = missing();
   status.keys.OPENAI_API_KEY = { configured: true, source: 'local', value: 'synthetic-must-not-echo' };
   const sandbox = {
-    $: element, esc: (value) => String(value), confirm: () => true, toast: () => {},
+    $: element, esc: (value) => String(value), confirm: () => true, toast: (message) => toasts.push(message),
+    document: { body: { classList: { contains: () => false } } },
     api: async (path, options) => {
       requests.push({ path, options });
       if (fail) throw new Error('synthetic-failed-secret-must-not-echo');
       return status;
     },
   };
-  vm.runInNewContext(`${script.slice(start, end)}\nglobalThis.ui = {loadCredentials, saveCredentials, credentialInput, credentialRemove};`, sandbox);
+  vm.runInNewContext(`${isolatedScript}\nglobalThis.ui = {loadCredentials, saveCredentials, credentialInput, credentialRemove};`, sandbox);
   assert.match(element('apiCredentialFields').innerHTML, /type="password"/);
   assert.match(element('qqCredentialFields').innerHTML, /type="text" id="credential-QQBOT_APPID"/);
   await sandbox.ui.loadCredentials();
@@ -178,6 +182,7 @@ test('credential UI uses same-origin status API and never echoes saved or failed
     assert.equal(el.innerHTML.includes('synthetic'), false);
   }
   assert.equal(element('credential-OPENAI_API_KEY').value, '');
+  assert.ok(toasts.every((message) => !message.includes('synthetic')));
 });
 
 test('rejects symbolic links, dangling links, directories and hardlinks without touching targets', (t) => {

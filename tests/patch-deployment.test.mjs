@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { withQqbotProfileDocuments } from '../qqbot-patches/profile-document-reader.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -198,18 +199,30 @@ test('published interaction/person-card/events/vector chain deploys in dependenc
   ok(f.run('--revert')); assert.deepEqual(readFileSync(bootstrap), original);
 });
 
-test('published image helpers deploy with nested registration and real inbound grant/revoke lifecycle', async (t) => {
+test('published image helpers deploy with nested registration and SQLite permissions and inbound grant/revoke lifecycle', async (t) => {
   const f = fixture(t);
-  const bootstrap = f.put(join(f.dist, 'gateway/bootstrap.js'), 'export function setup(ctx, bot, manager, config, logger){\n    setupBotControl(ctx, manager, config, logger);\n}\n');
+  const bootstrap = f.put(join(f.dist, 'gateway/bootstrap.js'), 'export function setup(ctx, bot, manager, config, logger){\n    setupBotControl(ctx, manager, config, logger);\n}\nexport function checkImage(profile, msg){ return qqbotImagePermissionCheck(profile, msg); }\nexport const readVoiceDocument = (...args) => qqbotTtsProfileReader(...args);\n');
   const inbound = f.put(join(f.dist, 'transport/inbound.js'), 'export async function inbound(record, msg, message){\n    record.agent.followup(message);\n    try {\n        await record.agent.whenIdle();\n    }\n    catch {}\n}\n');
-  for (const name of ['media-archive', 'image-generation-helper', 'image-generation-tool', 'image-generation-inbound', 'image-generation-revoke']) {
+  for (const name of ['profile-document-reader', 'tts-tool-helper', 'media-archive', 'image-generation-helper', 'image-generation-tool', 'image-generation-inbound', 'image-generation-revoke']) {
     f.put(join(f.snippets, name + '.js'), readFileSync(join(root, 'qqbot-patches', name + '.js')));
   }
   const before = { bootstrap: readFileSync(bootstrap), inbound: readFileSync(inbound) };
-  const only = '--only=media-archive,image-generation-helper,image-generation-tool,image-generation-inbound,image-generation-revoke';
+  const only = '--only=tts-tool-helper,media-archive,image-generation-helper,image-generation-tool,image-generation-inbound,image-generation-revoke';
   ok(f.run('--plan', only)); assert.deepEqual(readFileSync(bootstrap), before.bootstrap); assert.deepEqual(readFileSync(inbound), before.inbound);
   ok(f.run(only)); const deployed = snapshot(f.profile); ok(f.run('--check', only)); ok(f.run(only)); assert.deepEqual(snapshot(f.profile), deployed);
   assert.match(readFileSync(bootstrap, 'utf8'), /setupOpenAiImageTool\(ctx, bot, manager, config, logger\)/);
+  const { checkImage, readVoiceDocument } = await import(pathToFileURL(bootstrap).href);
+  const msg = { kind: 'group', senderId: 'synthetic-member', groupOpenid: 'synthetic-group' };
+  const skill = { id: 'image-gen', audiences: [{ openids: [msg.senderId] }] };
+  f.put(join(f.profile, 'qqbot-role-skills.json'), JSON.stringify({ skills: [skill] }));
+  assert.equal(checkImage(f.profile, msg).via, 'role', 'legacy profiles remain readable');
+  withQqbotProfileDocuments(f.profile, db => db.update('role-skills', () => ({ skills: [] })));
+  assert.equal(checkImage(f.profile, msg).allowed, false, 'SQLite revocation supersedes stale JSON');
+  withQqbotProfileDocuments(f.profile, db => db.update('role-skills', () => ({ skills: [skill] })));
+  assert.equal(checkImage(f.profile, msg).via, 'role', 'SQLite grants are read without restart');
+  const voiceSettings = { enabled: false, providers: [{ id: 'edge' }] };
+  withQqbotProfileDocuments(f.profile, db => db.update('tts', () => voiceSettings));
+  assert.deepEqual(readVoiceDocument(f.profile, 'tts'), voiceSettings);
   const module = await import(pathToFileURL(inbound).href);
   const originalAuthorize = globalThis.__qqbotImageGenerationAuthorize;
   t.after(() => { if (originalAuthorize === undefined) delete globalThis.__qqbotImageGenerationAuthorize; else globalThis.__qqbotImageGenerationAuthorize = originalAuthorize; });

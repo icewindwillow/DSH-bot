@@ -11,6 +11,7 @@
  * 配置文件不存在或损坏时按默认链工作，不会让语音功能整个失效。
  * 每次调用都重新读配置，面板保存后无需重启机器人。
  */
+const qqbotTtsProfileReader = /* inline-profile-reader */ null;
 function setupTtsTool(ctx, bot, config, logger) {
     let tools;
     try {
@@ -35,8 +36,9 @@ function setupTtsTool(ctx, bot, config, logger) {
     // （qqbot-people.json 的 social.affinity）。语音要烧本机算力，缺文件或损坏一律按「没权限」。
     const VOICE_PERMISSION_DEFAULTS = Object.freeze({ affinityMin: 60, skill: 'voice-gen' });
 
-    function readProfileJson(name) {
-        const file = `${profileDir}/${name}`;
+    function readPermissionDocument(type) {
+        if (qqbotTtsProfileReader) return qqbotTtsProfileReader(profileDir, type);
+        const file = `${profileDir}/qqbot-${type}.json`;
         const stat = fs.lstatSync(file);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4 * 1024 * 1024)
             throw new Error('unsafe voice permission source');
@@ -44,7 +46,7 @@ function setupTtsTool(ctx, bot, config, logger) {
     }
     function voicePermission() {
         try {
-            const raw = readProfileJson('qqbot-role-skills.json')?.voicePermission;
+            const raw = readPermissionDocument('role-skills')?.voicePermission;
             const min = Number(raw?.affinityMin);
             const skill = typeof raw?.skill === 'string' && raw.skill.trim() !== '' ? raw.skill.trim() : VOICE_PERMISSION_DEFAULTS.skill;
             return {
@@ -66,14 +68,14 @@ function setupTtsTool(ctx, bot, config, logger) {
     }
     function voicePerson(senderId) {
         try {
-            const people = readProfileJson('qqbot-people.json')?.people;
+            const people = readPermissionDocument('people')?.people;
             return (Array.isArray(people) ? people : []).find((person) => Array.isArray(person?.openids) && person.openids.includes(senderId));
         }
         catch { return undefined; }
     }
     function voiceIsOwner(senderId, person) {
         let owners;
-        try { owners = readProfileJson('qqbot-command-owners.json'); } catch { return false; }
+        try { owners = readPermissionDocument('command-owners'); } catch { return false; }
         if ((Array.isArray(owners?.openids) ? owners.openids : []).includes(senderId))
             return true;
         const names = (Array.isArray(owners?.names) ? owners.names : []).map((name) => String(name).trim()).filter(Boolean);
@@ -84,7 +86,7 @@ function setupTtsTool(ctx, bot, config, logger) {
     /** 只认 voicePermission.skill 指名的那个技能，看它的 audiences；别的技能不顺带放行。 */
     function voiceRoleGrant(gid, senderId, person, skillId) {
         let skills;
-        try { skills = readProfileJson('qqbot-role-skills.json')?.skills; } catch { return undefined; }
+        try { skills = readPermissionDocument('role-skills')?.skills; } catch { return undefined; }
         const skill = (Array.isArray(skills) ? skills : []).find((item) => item && String(item.id ?? '') === skillId);
         if (!skill)
             return undefined;
@@ -160,8 +162,9 @@ function setupTtsTool(ctx, bot, config, logger) {
         if (!fs)
             return DEFAULT_SETTINGS;
         try {
-            const raw = fs.readFileSync(settingsFile, 'utf8');
-            const parsed = JSON.parse(raw);
+            const parsed = qqbotTtsProfileReader ? qqbotTtsProfileReader(profileDir, 'tts')
+                : JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+            if (qqbotTtsProfileReader && Object.keys(parsed).length === 0) return DEFAULT_SETTINGS;
             if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.providers) || parsed.providers.length === 0)
                 throw new Error('配置结构不完整');
             return parsed;

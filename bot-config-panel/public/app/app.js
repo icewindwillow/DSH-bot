@@ -405,12 +405,12 @@ async function saveCredentials(event) {
     $('credentialsMsg').textContent = '已保存本地配置；停止旧机器人后，在同一 profile 环境中运行 npm run bot 生效。继承环境变量仍优先。';
     $('credentialsAlerts').textContent = '保存不会自动启动、切换模型或清除继承环境。右上角重启按钮仅适用于已显式配置的 macOS launchd 服务；首次使用请按部署指南启动。';
     toast('凭据已保存，请重启机器人', 'ok');
-  } catch (err) {
+  } catch {
     // 保持 credentialsLoaded，否则按钮会一直灰着，用户连重试都做不到
-    const detail = err instanceof Error ? err.message : String(err);
+    // Do not echo server errors: a proxy or validation layer may include a submitted secret.
     $('credentialsMsg').className = 'msg err';
-    $('credentialsMsg').textContent = `保存失败：${detail}（输入已清空，请重新填写后再保存）`;
-    toast(`保存失败：${detail}`, 'err', 6000);
+    $('credentialsMsg').textContent = '保存失败：请检查面板服务及本地文件权限后重试（输入已清空，请重新填写后再保存）';
+    toast('保存失败，请检查面板服务及本地文件权限后重试', 'err', 6000);
   } finally {
     for (const key of Object.keys(values)) delete values[key];
     credentialsBusy = false;
@@ -424,8 +424,7 @@ $('btnReloadCredentials').onclick = () => {
   void loadCredentials();
 };
 
-// ─────────────────────────── 人格 ───────────────────────────
-// ── 生图设置：独立于上方 credential VM 测试截取段，无 Key / 无付费探测 ──
+// ── 生图设置：无 Key / 无付费探测 ──
 const imageGenerationControls = {
   enabled: 'imageEnabled', model: 'imageModel', size: 'imageSize', quality: 'imageQuality',
   timeoutSeconds: 'imageTimeout',

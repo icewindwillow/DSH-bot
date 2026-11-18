@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IMAGE_GENERATION_DEFAULTS } from '../bot-config-panel/image-generation.mjs';
+import { readProfileDocument } from '../plugins/qqbot-core/profile-documents.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SERVER = join(ROOT, 'bot-config-panel', 'server.mjs');
@@ -289,12 +290,12 @@ test('real panel HTTP: the per-person image toggle syncs to the image-gen skill 
 
     const off = await request(port, '/api/modules', { cookie, method: 'PUT', body: { name: '甲', modules: { imageGen: { enabled: false } } } });
     assert.equal(off.json.modules.imageGen.enabled, false);
-    const removed = JSON.parse(readFileSync(join(profile, 'qqbot-role-skills.json'), 'utf8'));
+    const removed = readProfileDocument(profile, 'role-skills');
     assert.deepEqual(removed.skills.find((skill) => skill.id === 'image-gen').audiences, []);
 
     const on = await request(port, '/api/modules', { cookie, method: 'PUT', body: { name: '乙', modules: { imageGen: { enabled: true } } } });
     assert.equal(on.json.modules.imageGen.enabled, true);
-    const added = JSON.parse(readFileSync(join(profile, 'qqbot-role-skills.json'), 'utf8'));
+    const added = readProfileDocument(profile, 'role-skills');
     assert.deepEqual(added.skills.find((skill) => skill.id === 'image-gen').audiences.map((audience) => audience.person), ['乙']);
   });
 });

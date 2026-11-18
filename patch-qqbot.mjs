@@ -1054,6 +1054,17 @@ function checkSyntax(file, source) {
     rmdirSync(tempDir);
   }
 }
+// Inline the same reader used by the panel; patched packages must not depend on
+// the location of this checkout. Each helper gets its own lexical scope.
+function loadSnippet(patch) {
+  const source = readFileSync(join(SNIPPETS, patch.snippet), 'utf8');
+  const placeholder = '/* inline-profile-reader */ null';
+  if (!source.includes(placeholder)) return source;
+  const reader = readFileSync(join(SNIPPETS, 'profile-document-reader.js'), 'utf8')
+    .split('\n').filter(line => !line.includes('dsh-qqbot-patch:profile-document-reader')).join('\n')
+    .replace(/^export /gm, '');
+  return source.replace(placeholder, () => `(() => {\n${reader}\nreturn readProfileDocument;\n})()`);
+}
 function plan() {
   const files = new Map();
   const problems = [];
@@ -1067,7 +1078,7 @@ function plan() {
         entry = { file, before, source: before.toString('utf8'), mode: statSync(file).mode & 0o777, patches: [] };
         files.set(file, entry);
       }
-      let snippet = readFileSync(join(SNIPPETS, patch.snippet), 'utf8').replace(/\n$/, '');
+      let snippet = loadSnippet(patch).replace(/\n$/, '');
       const range = markerRange(entry.source, snippet, patch.name);
       snippet = preserveChildren(snippet, range, entry.source, patch);
       if (mode === 'check') {
@@ -1122,7 +1133,7 @@ function apply(entries) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const manifest = {
       format: 1, id, at: new Date().toISOString(), status: 'prepared', node: process.version,
-      patches: selected.map((p) => ({ name: p.name, sha256: hash(readFileSync(join(SNIPPETS, p.snippet))) })),
+      patches: selected.map((p) => ({ name: p.name, sha256: hash(loadSnippet(p)) })),
       files: changed.map((e, i) => ({ file: e.file, backup: `${i}.original`, before: hash(e.before), after: hash(e.after), mode: e.mode })),
     };
     changed.forEach((entry, i) => writeFileSync(join(dir, manifest.files[i].backup), entry.before, { mode: 0o600, flag: 'wx' }));
