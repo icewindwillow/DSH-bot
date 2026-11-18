@@ -6,7 +6,7 @@
 
 **DSH-bot 是 DeepSeek Harness（DSH）的 QQ 群聊增强项目。** QQ 连接和基础会话由 DSH 与上游 `@tencent-connect/dsh-qqbot` 提供；这里负责群聊行为、记忆、控制台与部署工具。仓库不提供独立 QQ 宿主，也不托管模型。
 
-[快速开始](#快速开始) · [控制台实拍](#控制台实拍) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md)
+[快速开始](#快速开始) · [新版控制台](#新版控制台) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md)
 
 ## 在群里是什么样？
 
@@ -20,22 +20,9 @@
 
 回复模型和判断模型可以分开配置。前者负责对话，后者处理「要不要回」「值不值得记」之类的短判断。想尝试低成本的聊天路由，可以另装 [Our Free Model](docs/free-models.md)；免费额度与可用性由上游决定，QQ 凭据和其它服务凭据仍需自行配置。
 
-## 控制台实拍
+## 新版控制台
 
 启动 `npm run panel` 后，会进入新版「小易控制台」工作台：先看消息活动和系统健康度，再从系统设置管理模型、凭据、QQ 连接、语音与生图；人格、群成员、私人记忆、图库、事件追踪和群兴趣也都在同一套界面里。
-
-![新版控制台总览：消息活动、最近动态与系统健康度](docs/assets/panel-home.png)
-
-<details>
-<summary>再看看人格编辑与唤醒配置</summary>
-
-![新版控制台：分群人格、模块库与提示词预览](docs/assets/panel-persona.png)
-
-![新版控制台：模型、密钥与连接模块](docs/assets/panel-settings.png)
-
-</details>
-
-截图来自此仓库公开版控制台，使用隔离的示例 profile，不含真实群聊或凭据。截图中的「未运行」表示只启动了面板，没有连接 QQ。
 
 ## 群聊状态：记忆、事件与主动信息
 

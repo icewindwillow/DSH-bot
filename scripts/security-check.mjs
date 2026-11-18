@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ROOT } from './config.mjs';
 
 const allowedRoots = new Set(['.github', 'docs', 'examples', 'scripts', 'tests', 'qqbot-patches', 'bot-config-panel', 'plugins']);
-const allowedFiles = new Set(['.gitignore', '.gitattributes', 'package.json', 'package-lock.json', 'patch-qqbot.mjs', 'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE']);
+const allowedFiles = new Set(['lib/profile-documents.mjs', '.gitignore', '.gitattributes', 'package.json', 'package-lock.json', 'patch-qqbot.mjs', 'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE']);
 const rules = [
   ['OpenAI-style literal key', /\bsk-[A-Za-z0-9_-]{16,}\b/],
   ['GitHub access token', /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b/],
