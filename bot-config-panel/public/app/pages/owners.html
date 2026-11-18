@@ -1,0 +1,41 @@
+<section class="pane" id="paneOwners" hidden>
+    <div class="section-title-block"><div><div class="page-eyebrow">COMMAND ACCESS</div><h1>指令权限</h1><p>管理可以使用机器人管理指令的成员。</p></div></div>
+    <div class="card">
+      <h2>谁能给机器人下指令</h2>
+      <p class="hint">
+        只有这里列出来的人，发的 <span class="kbd">/compact</span>、<span class="kbd">/new</span>、<span class="kbd">/model</span>
+        才会被执行；其他人的斜杠指令会被**静默丢弃**（不回复，也不会当成聊天送进模型）。
+        改完保存即生效，不用重启。
+      </p>
+      <div class="grid">
+        <div class="field">
+          <label>主人 openid（精确匹配，最可靠）</label>
+          <div class="chips" id="ownerIds"></div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="newOwnerId" placeholder="粘贴 openid 后回车" />
+            <button class="small" id="addOwnerId">添加</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>主人名字（按成员档案匹配，跨群不用记 id）</label>
+          <div class="chips" id="ownerNames"></div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="newOwnerName" placeholder="输入主人名字，回车添加" />
+            <button class="small" id="addOwnerName">添加</button>
+          </div>
+        </div>
+      </div>
+      <div id="ownersAlert" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card">
+      <h2>从群成员里挑</h2>
+      <p class="hint">名单来自人员档案。点一下就把他加进主人名单（名字 + 已知 openid 一起加）。</p>
+      <div class="chips" id="peoplePool"></div>
+    </div>
+
+    <div class="savebar">
+      <button class="primary" id="btnSaveOwners">保存指令权限</button>
+      <span class="msg" id="ownersMsg"></span>
+    </div>
+  </section>

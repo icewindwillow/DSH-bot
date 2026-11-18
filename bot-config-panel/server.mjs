@@ -5,25 +5,29 @@
  * 一个页面管几件事：
  *   1. 用哪个模型（agent-default-model.provider / model）
  *   2. 推理强度（agent-default-model.reasoningEffort + llm-pi-ai 路由默认 reasoning）
- *   3. 人格设定（qqbot-personas.json：模块文本、每个群用哪套人格）
- *   4. 每个群的唤醒指数（qqbot-groups.json：wakeIndex，0 = 只听 @ 和名字，100 = 老行为）
+ *   3. 人格设定（SQLite personas：模块文本、每个群用哪套人格）
+ *   4. 每个群的唤醒指数（SQLite groups-config：wakeIndex，0 = 只听 @ 和名字，100 = 老行为）
  *
  * 直接改 profile 里的真实配置文件：
  *   ~/.dsh/profiles/qqbot/cordis.patch.yml     ← 模型 / 推理强度（改完要重启机器人）
- *   ~/.dsh/profiles/qqbot/qqbot-personas.json  ← 人格（机器人每轮热读，保存即生效）
- *   ~/.dsh/profiles/qqbot/qqbot-groups.json    ← 唤醒指数（每条群消息热读，保存即生效）
+ *   ~/.dsh/profiles/qqbot/qqbot-documents.sqlite / personas ← 人格（机器人每轮热读，保存即生效）
+ *   ~/.dsh/profiles/qqbot/qqbot-documents.sqlite ← 唤醒指数（每条群消息热读，保存即生效）
  *
  * 每次写入前自动备份成 <文件>.bak-<时间戳>；YAML 写坏了会自动回滚并报错。
  *
  * 启动：node bot-config-panel/server.mjs [端口]     # 默认 http://127.0.0.1:7791
  */
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { openProfileDocuments, profileDocumentTypes } from '../lib/profile-documents.mjs';
+import { mutateQqbotEvents, readProfileDocument, readQqbotGroupDirectory, readQqbotProfileDocument } from '../qqbot-patches/profile-document-reader.js';
 import { credentialStatus, updateCredentials } from './credentials.mjs';
 import { readImageGenerationSettings, writeImageGenerationSettings } from './image-generation.mjs';
+import { readTtsSettings, writeTtsSettings } from './tts.mjs';
+import { memoryPresentation } from './memory-presentation.mjs';
 import {
   readFileSync, writeFileSync, copyFileSync, existsSync, statSync,
-  openSync, closeSync, renameSync, readdirSync, chmodSync, unlinkSync,
+  openSync, closeSync, readSync, renameSync, readdirSync, chmodSync, unlinkSync, mkdirSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -36,19 +40,62 @@ if (!/^[A-Za-z0-9_-]+$/.test(PROFILE_NAME)) throw new Error('Invalid QQBOT_PROFI
 const PROFILE_DIR = resolve(process.env.QQBOT_PROFILE_DIR ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'profiles', PROFILE_NAME));
 const OVERLAY = join(PROFILE_DIR, 'dsh-bot.patch.yml');
 const PATCH = existsSync(OVERLAY) ? OVERLAY : join(PROFILE_DIR, 'cordis.patch.yml');
-const PERSONAS = join(PROFILE_DIR, 'qqbot-personas.json');
-const OWNERS = join(PROFILE_DIR, 'qqbot-command-owners.json');
-const PEOPLE = join(PROFILE_DIR, 'qqbot-people.json');
-const GROUPS = join(PROFILE_DIR, 'qqbot-groups.json');
-const GROUPS_META = join(PROFILE_DIR, 'qqbot-groups-meta.json');
-const EVENTS = join(PROFILE_DIR, 'qqbot-events.json');
+const GROUPS_META = join(PROFILE_DIR, 'qqbot-documents.sqlite');
+const PEOPLE = GROUPS_META;
+const OWNERS = GROUPS_META;
+const GROUPS = GROUPS_META;
+const PERSONAS = GROUPS_META;
+const SEEN_GROUPS = join(PROFILE_DIR, 'qqbot-seen-groups.log');
+const MODEL_STATUS = join(PROFILE_DIR, 'qqbot-model-status.json');
+function withProfileDocuments(fn) {
+  const store = openProfileDocuments(PROFILE_DIR);
+  try { return fn(store); }
+  finally { store.close(); }
+}
 const MEDIA_PRIMARY = join(PROFILE_DIR, 'media');
-const MEDIA_ALLOW = join(PROFILE_DIR, 'qqbot-media-allow.json');
-const MODULES = join(PROFILE_DIR, 'qqbot-person-modules.json');
-const ROLE_REGISTRY = join(PROFILE_DIR, 'qqbot-role-skills.json');
+const INTEREST_CONFIG = GROUPS_META;
+const INTEREST_STATE = join(PROFILE_DIR, 'qqbot-interest-state.json');
+const INTEREST_DB = resolve(process.env.QQBOT_MEMORY_DB ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'memory', 'ltm.db'));
 const MEDIA_FALLBACK = join(homedir(), '.dsh', 'qqbot-media');
 const WAKE_INDEX_DEFAULT = 100;
 const INDEX = join(HERE, 'public', 'index.html');
+const PANEL_APP = join(HERE, 'public', 'app');
+const PANEL_PAGES = Object.freeze(['home', 'settings', 'persona', 'people', 'memories', 'interest', 'gallery', 'events', 'owners']);
+const PANEL_COMPONENTS = Object.freeze(['overlays']);
+const DSH_CREDENTIALS = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), '.credentials.yaml');
+const DSH_MODEL_KEYS = ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY'];
+
+// Read only the presence of allowlisted strings in DSH refs or legacy top-level keys.
+// Keep YAML values and parser diagnostics out of stdout, stderr and HTTP responses.
+function dshModelCredentialNames() {
+  if (!existsSync(DSH_CREDENTIALS)) return [];
+  const script = `
+import json, sys, yaml
+with open(sys.argv[1], 'rb') as file:
+    text = file.read(1024 * 1024 + 1)
+if len(text) > 1024 * 1024:
+    raise ValueError('credential file too large')
+doc = yaml.safe_load(text)
+if doc is None:
+    doc = {}
+if not isinstance(doc, dict):
+    raise ValueError('invalid credential document')
+refs = doc.get('refs')
+refs = refs if isinstance(refs, dict) else {}
+def present(value):
+    return isinstance(value, str) and bool(value.strip())
+print(json.dumps([key for key in sys.argv[2:] if present(refs.get(key)) or present(doc.get(key))]))
+`;
+  return JSON.parse(execFileSync('python3', ['-c', script, DSH_CREDENTIALS, ...DSH_MODEL_KEYS], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, maxBuffer: 4096,
+  }));
+}
+function withDshCredentialStatus(status, names) {
+  for (const key of names) {
+    if (!status.keys[key].configured) status.keys[key] = { configured: true, source: 'dsh' };
+  }
+  return status;
+}
 const WORKDIR = process.env.QQBOT_WORKDIR ?? join(PROFILE_DIR, 'workspace');
 const SESSION_COOKIE = randomBytes(32).toString('hex');
 const LOG = process.env.QQBOT_LOG ?? join(WORKDIR, 'qqbot-restart.log');
@@ -162,15 +209,43 @@ function mtimeOf(file) {
 
 /** 原子写 + 备份；返回备份路径 */
 function writeWithBackup(file, text) {
-  const backup = `${file}.bak-${stamp()}`;
+  const suffix = `${stamp()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+  const backup = `${file}.bak-${suffix}`;
   const exists = existsSync(file);
   const mode = exists ? statSync(file).mode & 0o777 : 0o600;   // profile 里有 appSecret，别把 600 写成 644
   if (exists) copyFileSync(file, backup);
-  const tmp = `${file}.tmp-${process.pid}`;
+  const tmp = `${file}.tmp-${suffix}`;
   writeFileSync(tmp, text, { encoding: 'utf8', mode });
   chmodSync(tmp, mode);
   renameSync(tmp, file);
   return backup;
+}
+
+/** 跨面板进程串行化同一份 JSON 的读-改-写事务。 */
+async function withFileLock(file, fn, label = '配置文件') {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + 3000;
+  let fd;
+  for (;;) {
+    try {
+      fd = openSync(lock, 'wx');
+      break;
+    }
+    catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 8000) unlinkSync(lock);
+      }
+      catch { /* 已经被别人清掉 */ }
+      if (Date.now() > deadline) throw new Error(`${label}正被其他请求修改，请稍后重试`);
+      await sleep(15);
+    }
+  }
+  try { return await fn(); }
+  finally {
+    try { closeSync(fd); } catch { /* 忽略 */ }
+    try { unlinkSync(lock); } catch { /* 忽略 */ }
+  }
 }
 
 function stamp() {
@@ -395,10 +470,7 @@ function validateYaml(text) {
 // ─────────────────────────── 人格 JSON ───────────────────────────
 
 function readPersonas() {
-  if (!existsSync(PERSONAS)) return { modules: {}, personas: {}, archetypes: {} };
-  const parsed = JSON.parse(readFileSync(PERSONAS, 'utf8'));
-  if (!parsed || typeof parsed !== 'object') throw new Error('qqbot-personas.json 不是对象');
-  return parsed;
+  return readProfileDocument(PROFILE_DIR, 'personas');
 }
 
 /** 结构校验：模块必须是字符串、引用必须存在、人格条目形状正确 */
@@ -425,6 +497,9 @@ function validatePersonas(data) {
       if (typeof id !== 'string' || !(id in modules))
         throw new Error(`人格 ${key} 引用了不存在的模块：${String(id)}`);
     }
+    const personaName = entry?.name;
+    if (personaName !== undefined && personaName !== null && typeof personaName !== 'string')
+      throw new Error(`人格 ${key} 的名称必须是字符串`);
     const archetype = entry?.archetype;
     if (archetype !== undefined && archetype !== null && archetype !== '') {
       if (typeof archetype !== 'string' || !(archetype in archetypes))
@@ -436,81 +511,64 @@ function validatePersonas(data) {
 // ─────────────────────────── 群列表 / 机器人进程 ───────────────────────────
 
 function readGroups() {
-  if (!existsSync(GROUPS_META)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(GROUPS_META, 'utf8'));
-    return Array.isArray(parsed.groups) ? parsed.groups : [];
-  }
+  try { return readQqbotGroupDirectory(PROFILE_DIR); }
   catch { return []; }
 }
 
 /**
- * 每群唤醒指数：0–100，存在 qqbot-groups.json 的 wakeIndex 表里。
+ * 每群唤醒指数：0–100，存在 groups-config 的 wakeIndex 字段里。
  * 100 = 老行为（没被点名也每条都接），越低越少主动插话；@ 和叫名字不受影响。
  */
 function clampIndex(value) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function readWakeIndex() {
-  const fallback = { map: {}, default: WAKE_INDEX_DEFAULT, path: GROUPS, mtimeMs: mtimeOf(GROUPS) };
-  if (!existsSync(GROUPS)) return fallback;
-  try {
-    const parsed = JSON.parse(readFileSync(GROUPS, 'utf8'));
-    const map = {};
-    const raw = parsed?.wakeIndex;
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (const [gid, value] of Object.entries(raw)) {
-        const n = Number(value);
-        if (typeof gid === 'string' && gid.trim() !== '' && Number.isFinite(n))
-          map[gid] = clampIndex(n);
-      }
-    }
-    const def = Number(parsed?.wakeIndexDefault);
-    return {
-      map,
-      default: Number.isFinite(def) ? clampIndex(def) : WAKE_INDEX_DEFAULT,
-      path: GROUPS,
-      mtimeMs: mtimeOf(GROUPS),
-    };
-  }
-  catch { return fallback; }
+function profileDocumentVersion(doc) {
+  return createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }
 
-/** 写一个群的唤醒指数；值等于默认值时删掉这条，文件保持干净 */
-function writeWakeIndex(groupOpenid, value, baseMtimeMs) {
+function requireProfileDocumentVersion(doc, version, label) {
+  if (version === profileDocumentVersion(doc)) return;
+  const error = new Error(`${label}版本已变化，请先刷新页面再保存。`);
+  error.status = 409;
+  throw error;
+}
+
+function wakeIndexSnapshot(doc) {
+  const entries = doc.wakeIndex && typeof doc.wakeIndex === 'object' && !Array.isArray(doc.wakeIndex)
+    ? Object.entries(doc.wakeIndex) : [];
+  const map = Object.fromEntries(entries.filter(([gid, value]) => gid.trim() && Number.isFinite(Number(value)))
+    .map(([gid, value]) => [gid, clampIndex(Number(value))]));
+  const def = Number(doc.wakeIndexDefault);
+  return { map, default: Number.isFinite(def) ? clampIndex(def) : WAKE_INDEX_DEFAULT,
+    path: GROUPS, version: profileDocumentVersion(doc) };
+}
+
+function readWakeIndex() {
+  try { return wakeIndexSnapshot(readProfileDocument(PROFILE_DIR, 'groups-config')); }
+  catch { return { map: {}, default: WAKE_INDEX_DEFAULT, path: GROUPS, version: null }; }
+}
+
+/** Update one group's wake index, without replacing other group settings. */
+function writeWakeIndex(groupOpenid, value, baseVersion) {
   if (typeof groupOpenid !== 'string' || groupOpenid.trim() === '')
     throw new Error('缺少群 id');
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0 || n > 100)
     throw new Error('唤醒指数必须是 0–100 的数字');
 
-  const current = mtimeOf(GROUPS);
-  if (typeof baseMtimeMs === 'number' && baseMtimeMs !== 0 && Math.abs(current - baseMtimeMs) > 1) {
-    const err = new Error('qqbot-groups.json 已被别处修改，请先刷新页面再保存。');
-    err.status = 409;
-    throw err;
-  }
-
-  let data = {};
-  if (existsSync(GROUPS)) {
-    try { data = JSON.parse(readFileSync(GROUPS, 'utf8')); }
-    catch { throw new Error('qqbot-groups.json 不是合法 JSON，先修好再改'); }
-  }
-  if (!data || typeof data !== 'object' || Array.isArray(data))
-    throw new Error('qqbot-groups.json 顶层必须是对象');
-
-  const def = Number.isFinite(Number(data.wakeIndexDefault)) ? clampIndex(Number(data.wakeIndexDefault)) : WAKE_INDEX_DEFAULT;
-  const map = (data.wakeIndex && typeof data.wakeIndex === 'object' && !Array.isArray(data.wakeIndex))
-    ? { ...data.wakeIndex } : {};
-  const next = clampIndex(n);
-  if (next === def) delete map[groupOpenid];
-  else map[groupOpenid] = next;
-  if (Object.keys(map).length > 0) data.wakeIndex = map;
-  else delete data.wakeIndex;
-
-  const backup = writeWithBackup(GROUPS, `${JSON.stringify(data, null, 2)}\n`);
-  return { backup, mtimeMs: mtimeOf(GROUPS), map };
+  const saved = withProfileDocuments(db => db.update('groups-config', doc => {
+    requireProfileDocumentVersion(doc, baseVersion, '群配置');
+    const { default: def } = wakeIndexSnapshot(doc);
+    const entries = doc.wakeIndex && typeof doc.wakeIndex === 'object' && !Array.isArray(doc.wakeIndex)
+      ? Object.entries(doc.wakeIndex).filter(([id]) => id !== groupOpenid) : [];
+    const next = clampIndex(n);
+    if (next !== def) entries.push([groupOpenid, next]);
+    if (entries.length) doc.wakeIndex = Object.fromEntries(entries);
+    else delete doc.wakeIndex;
+    return doc;
+  }));
+  return wakeIndexSnapshot(saved);
 }
 
 
@@ -534,20 +592,24 @@ function moduleAudienceMatch(skill, name, person) {
 function imageSkillIdOf(roleDoc) {
   return String(roleDoc?.imagePermission?.skill ?? 'image-gen');
 }
+function voiceSkillIdOf(roleDoc) {
+  return String(roleDoc?.voicePermission?.skill ?? 'voice-gen');
+}
 
-function effectiveModuleFor(person) {
+function effectiveModuleFor(person, docs) {
   const name = String(person?.name ?? '');
-  const modules = readJsonFile(MODULES, { people: {} });
+  const modules = docs['person-modules'];
   const mod = modules.people?.[name] ?? {};
-  const allowDoc = readJsonFile(MEDIA_ALLOW, { people: [] });
+  const allowDoc = docs['media-allow'];
   const allowEntry = (Array.isArray(allowDoc.people) ? allowDoc.people : []).find((entry) =>
     entry && (entry.name === name || (Array.isArray(entry.openids) && Array.isArray(person?.openids)
       && entry.openids.some((id) => person.openids.includes(id)))));
-  const roleDoc = readJsonFile(ROLE_REGISTRY, { skills: [] });
+  const roleDoc = docs['role-skills'];
   const skills = Array.isArray(roleDoc.skills) ? roleDoc.skills : [];
   // 能力型技能（生图）不是语言风格，不参与 style 模块的判定。
   const styleSkill = skills.find((skill) => skill && skill.kind !== 'capability' && moduleAudienceMatch(skill, name, person));
   const imageSkill = skills.find((skill) => skill && String(skill.id ?? '') === imageSkillIdOf(roleDoc));
+  const voiceSkill = skills.find((skill) => skill && String(skill.id ?? '') === voiceSkillIdOf(roleDoc));
   return {
     collectImages: {
       enabled: Boolean(allowEntry),
@@ -564,13 +626,15 @@ function effectiveModuleFor(person) {
     imageGen: {
       enabled: Boolean(imageSkill) && moduleAudienceMatch(imageSkill, name, person),
     },
+    voiceGen: {
+      enabled: Boolean(voiceSkill) && moduleAudienceMatch(voiceSkill, name, person),
+    },
   };
 }
 
 /** 指令白名单：{ openids: string[], names: string[] } */
 function readOwners() {
-  if (!existsSync(OWNERS)) return { openids: [], names: [] };
-  const parsed = JSON.parse(readFileSync(OWNERS, 'utf8'));
+  const parsed = readProfileDocument(PROFILE_DIR, 'command-owners');
   return {
     openids: Array.isArray(parsed.openids) ? parsed.openids.filter((x) => typeof x === 'string' && x !== '') : [],
     names: Array.isArray(parsed.names) ? parsed.names.filter((x) => typeof x === 'string' && x.trim() !== '') : [],
@@ -594,22 +658,14 @@ function cleanList(value, label) {
 function writeOwners(next) {
   const openids = cleanList(next.openids, 'openids');
   const names = cleanList(next.names, 'names');
-  const previous = existsSync(OWNERS) ? JSON.parse(readFileSync(OWNERS, 'utf8')) : {};
-  const data = {
-    ...previous,
-    _说明: previous._说明 ?? '能对机器人发 /compact /new /model 等斜杠指令的人。openids 精确匹配；names 会去 qqbot-people.json 里查同名成员的 openid。',
-    openids,
-    names,
-  };
-  const backup = writeWithBackup(OWNERS, `${JSON.stringify(data, null, 2)}\n`);
-  return { openids, names, backup };
+  withProfileDocuments(db => db.update('command-owners', previous => ({ ...previous, openids, names })));
+  return { openids, names };
 }
 
 /** 群成员档案里能当主人候选的人：名字 + 已知 openid */
 function peopleIndex() {
-  if (!existsSync(PEOPLE)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(PEOPLE, 'utf8'));
+    const parsed = readPeopleStore();
     return (parsed.people ?? [])
       .filter((p) => typeof p?.name === 'string')
       .map((p) => ({ name: p.name, openids: Array.isArray(p.openids) ? p.openids : [], groups: Array.isArray(p.groups) ? p.groups : [] }));
@@ -621,106 +677,41 @@ function peopleIndex() {
 
 /** 完整群成员档案（编辑器用；peopleIndex 只给主人页的名字/openid） */
 function readPeopleStore() {
-  if (!existsSync(PEOPLE)) return { people: [] };
-  return JSON.parse(readFileSync(PEOPLE, 'utf8'));
+  const doc = readProfileDocument(PROFILE_DIR, 'people');
+  if (!Array.isArray(doc.people)) throw new Error('People document must have a people array');
+  return doc;
 }
 
-/**
- * 和机器人用同一把文件锁（qqbot-people.json.lock）：
- * 机器人的 people-store 补丁也认这个锁，谁先拿到谁写，避免整文件互相覆盖。
- * 控制台是同步阻塞的短写，等不到 3 秒就报错让用户重试。
- */
-function withPeopleLock(fn) {
-  const lock = `${PEOPLE}.lock`;
-  const deadline = Date.now() + 3000;
-  let fd;
-  for (;;) {
-    try {
-      fd = openSync(lock, 'wx');
-      break;
-    }
-    catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > 8000) unlinkSync(lock);
-      }
-      catch { /* 已经被别人清掉 */ }
-      if (Date.now() > deadline) throw new Error('档案正被机器人写入，请稍后重试');
-      const end = Date.now() + 15;
-      while (Date.now() < end) { /* 15ms 自旋 */ }
-    }
-  }
-  try {
-    return fn();
-  }
-  finally {
-    try { closeSync(fd); } catch { /* 忽略 */ }
-    try { unlinkSync(lock); } catch { /* 忽略 */ }
-  }
+function readPeopleSnapshot() {
+  const data = readPeopleStore();
+  return { data, version: profileDocumentVersion(data) };
 }
 
-function readEventsStore() {
-  try {
-    const raw = JSON.parse(readFileSync(EVENTS, 'utf8'));
-    return raw && Array.isArray(raw.events) ? raw : { version: 1, events: [] };
-  }
-  catch {
-    return { version: 1, events: [] };
-  }
-}
-
-/** 写事件库：和机器人同一把锁（qqbot-events.json.lock），原子写 + 备份 */
-function writeEventsStore(mutator) {
-  const lock = `${EVENTS}.lock`;
-  const deadline = Date.now() + 3000;
-  let fd;
-  for (;;) {
-    try {
-      fd = openSync(lock, 'wx');
-      break;
-    }
-    catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > 8000) unlinkSync(lock);
-      }
-      catch { /* 已经被别人清掉 */ }
-      if (Date.now() > deadline) throw new Error('事件库正被机器人写入，请稍后重试');
-      const end = Date.now() + 15;
-      while (Date.now() < end) { /* 15ms 自旋 */ }
-    }
-  }
-  try {
-    const state = readEventsStore();
-    const result = mutator(state);
-    if (result === false) return undefined;
-    const tmp = `${EVENTS}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-    try { copyFileSync(EVENTS, `${EVENTS}.bak`); } catch { /* 首次写 */ }
-    renameSync(tmp, EVENTS);
-    return result;
-  }
-  finally {
-    try { closeSync(fd); } catch { /* 忽略 */ }
-    try { unlinkSync(lock); } catch { /* 忽略 */ }
-  }
-}
-
-/** 写群成员档案：校验 name、拿机器人同一把锁、自动备份、原子写 */
-function writePeopleStore(data) {
-  if (!data || !Array.isArray(data.people))
-    throw new Error('JSON 必须是 { "people": [...] } 结构');
+/** 写入 SQLite people 文档；版本校验与更新在同一事务内完成。 */
+function writePeopleStore(data, baseVersion) {
+  if (!data || !Array.isArray(data.people)) throw new Error('JSON 必须是 { "people": [...] } 结构');
   for (const [i, person] of data.people.entries()) {
     if (!person || typeof person !== 'object' || typeof person.name !== 'string' || person.name.trim() === '')
       throw new Error(`第 ${i + 1} 条缺少 name`);
   }
-  return withPeopleLock(() => {
-    const backup = writeWithBackup(PEOPLE, `${JSON.stringify(data, null, 2)}\n`);
-    return { backup, count: data.people.length };
-  });
+  const stored = withProfileDocuments(store => store.update('people', current => {
+    requireProfileDocumentVersion(current, baseVersion, '人员档案');
+    return data;
+  }));
+  return { count: stored.people.length, version: profileDocumentVersion(stored) };
 }
 
-/** 写群列表元数据：校验 id/name/重复、自动备份、原子写 */
+function readEventsStore() {
+  const raw = readProfileDocument(PROFILE_DIR, 'events');
+  if (!Array.isArray(raw.events)) throw new Error('Event document must have an events array');
+  return raw;
+}
+
+function writeEventsStore(mutator) {
+  return mutateQqbotEvents(PROFILE_DIR, mutator);
+}
+
+/** 写群列表元数据：校验 id/name/重复，数据和审计同事务提交。 */
 function writeGroupsMeta(groups) {
   if (!Array.isArray(groups))
     throw new Error('groups 必须是数组');
@@ -737,8 +728,179 @@ function writeGroupsMeta(groups) {
     seen.add(id);
     clean.push({ id, name });
   }
-  const backup = writeWithBackup(GROUPS_META, `${JSON.stringify({ groups: clean }, null, 2)}\n`);
-  return { backup, count: clean.length };
+  const stored = withProfileDocuments(store => store.update('groups-meta', current => ({ ...current, groups: clean })));
+  return { count: clean.length, groups: stored.groups };
+}
+
+// ── 群兴趣画像（P0–P3）────────────────────────────────────────────
+
+const INTEREST_MODES = new Set(['off', 'shadow']);
+const INTEREST_SEARCH_MODES = new Set(['off', 'manual', 'auto']);
+const INTEREST_SHARE_MODES = new Set(['off', 'auto']);
+
+function interestClamp(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function readInterestConfig() {
+  const raw = readProfileDocument(PROFILE_DIR, 'interest-config');
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+function readInterestStateDocument() {
+  const file = join(PROFILE_DIR, 'qqbot-interest-state.sqlite');
+  if (!existsSync(file)) return readJsonFile(INTEREST_STATE, {});
+  let db;
+  try {
+    const sqlite = process.getBuiltinModule?.('node:sqlite');
+    if (!sqlite) return {};
+    db = new sqlite.DatabaseSync(file, { readOnly: true });
+    db.exec('pragma busy_timeout = 500');
+    const initialized = db.prepare("select 1 from sqlite_schema where type = 'table' and name = 'interest_state'").get();
+    const row = initialized && db.prepare('select payload from interest_state where id = 1').get();
+    return row ? JSON.parse(row.payload) : readJsonFile(INTEREST_STATE, {});
+  }
+  catch { return {}; }
+  finally { db?.close(); }
+}
+
+function readInterestState() {
+  const raw = readInterestStateDocument();
+  const groups = raw && typeof raw.groups === 'object' ? raw.groups : {};
+  const global = raw && typeof raw.global === 'object' ? raw.global : {};
+  return { groups, global };
+}
+
+function readInterestActivity() {
+  const raw = readProfileDocument(PROFILE_DIR, 'interest-activity');
+  const groups = raw && typeof raw.groups === 'object' ? raw.groups : {};
+  return { at: Number(raw?.at) || 0, groups };
+}
+
+function openInterestDb() {
+  const sqlite = process.getBuiltinModule?.('node:sqlite');
+  if (!sqlite || !existsSync(INTEREST_DB)) return null;
+  try {
+    const db = new sqlite.DatabaseSync(INTEREST_DB);
+    // 主题层是向后兼容的：面板先行打开旧库时也完成迁移，避免话题列表因列不存在而整段为空。
+    try { db.exec("alter table group_interests add column broad_topic text not null default ''"); } catch { /* 已有 */ }
+    try {
+      db.prepare(`update group_interests set broad_topic = '魔兽世界无限服'
+                  where broad_topic = '' and (topic like '%魔兽%' or topic like '%无限服%' or topic like '%乌龟服%')`).run();
+    } catch { /* 旧库或表不存在 */ }
+    return db;
+  }
+  catch {
+    return null;
+  }
+}
+
+function interestCounts(db) {
+  const counts = new Map();
+  const bump = (gid, key, value) => {
+    const item = counts.get(gid) ?? { topics: 0, findings: 0 };
+    item[key] = value;
+    counts.set(gid, item);
+  };
+  try {
+    for (const row of db.prepare('select gid, count(*) as c from group_interests group by gid').all())
+      bump(String(row.gid), 'topics', Number(row.c) || 0);
+  }
+  catch { /* 表还没建 */ }
+  try {
+    for (const row of db.prepare('select gid, count(*) as c from interest_findings group by gid').all())
+      bump(String(row.gid), 'findings', Number(row.c) || 0);
+  }
+  catch { /* 表还没建 */ }
+  return counts;
+}
+
+/** 一个群的话题 / 发现 / 最近运行，供面板展开 */
+function interestGroupDetail(db, gid) {
+  const out = { topics: [], findings: [], runs: [] };
+  if (!db || !gid) return out;
+  try {
+    out.topics = db.prepare(`
+      select topic, broad_topic, category, heat, bond, searchable, sensitivity, mentions,
+             last_evidence_at, last_checked_at, next_check_at
+      from group_interests where gid = ?
+      order by (heat + bond * 0.5) desc
+      limit 40
+    `).all(gid);
+  }
+  catch { /* 表还没建 */ }
+  try {
+    out.findings = db.prepare(`
+      select topic_key, title, summary, url, angle, score, status,
+             target_person_name, found_at, shared_at, offered_count
+      from interest_findings where gid = ?
+      order by found_at desc
+      limit 20
+    `).all(gid);
+  }
+  catch { /* 表还没建 */ }
+  try {
+    out.runs = db.prepare(`
+      select topic_key, started_at, finished_at, searches, result, detail, error
+      from interest_runs where gid = ?
+      order by started_at desc
+      limit 10
+    `).all(gid);
+  }
+  catch { /* 表还没建 */ }
+  return out;
+}
+
+function normalizeInterestConfig(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  if (source.enabled !== undefined) out.enabled = source.enabled !== false;
+  if (source.mode !== undefined) out.mode = INTEREST_MODES.has(String(source.mode)) ? String(source.mode) : 'shadow';
+  if (source.activeMin !== undefined) out.activeMin = interestClamp(source.activeMin, 0, 1, 0.15);
+  if (source.observeMinMsgs !== undefined) out.observeMinMsgs = interestClamp(source.observeMinMsgs, 1, 100, 8);
+  if (source.observeIntervalMs !== undefined) out.observeIntervalMs = interestClamp(source.observeIntervalMs, 300000, 86400000, 3600000);
+  if (source.observeMaxPerDay !== undefined) out.observeMaxPerDay = interestClamp(source.observeMaxPerDay, 1, 96, 12);
+  if (source.observeGlobalMaxPerDay !== undefined) out.observeGlobalMaxPerDay = interestClamp(source.observeGlobalMaxPerDay, 1, 500, 60);
+  if (source.searchMode !== undefined)
+    out.searchMode = INTEREST_SEARCH_MODES.has(String(source.searchMode)) ? String(source.searchMode) : 'manual';
+  if (source.bring !== undefined) out.bring = source.bring !== false;
+  if (source.bringIntervalMs !== undefined) out.bringIntervalMs = interestClamp(source.bringIntervalMs, 1800000, 172800000, 14400000);
+  if (source.bringMaxPerDay !== undefined) out.bringMaxPerDay = interestClamp(source.bringMaxPerDay, 0, 10, 2);
+  if (source.bringMinScore !== undefined) out.bringMinScore = interestClamp(source.bringMinScore, 0, 1, 0.5);
+  if (source.bringMaxAgeMs !== undefined) out.bringMaxAgeMs = interestClamp(source.bringMaxAgeMs, 3600000, 2592000000, 259200000);
+  if (source.shareMode !== undefined)
+    out.shareMode = INTEREST_SHARE_MODES.has(String(source.shareMode)) ? String(source.shareMode) : 'off';
+  if (source.shareMinScore !== undefined) out.shareMinScore = interestClamp(source.shareMinScore, 0, 1, 0.6);
+  if (source.shareMaxPerDay !== undefined) out.shareMaxPerDay = interestClamp(source.shareMaxPerDay, 0, 10, 1);
+  if (source.shareMinGapMs !== undefined) out.shareMinGapMs = interestClamp(source.shareMinGapMs, 3600000, 259200000, 21600000);
+  if (source.shareMaxAgeMs !== undefined) out.shareMaxAgeMs = interestClamp(source.shareMaxAgeMs, 3600000, 2592000000, 172800000);
+  if (source.search && typeof source.search === 'object') {
+    out.search = {};
+    if (source.search.enabled !== undefined) out.search.enabled = source.search.enabled !== false;
+    if (source.search.mode !== undefined)
+      out.search.mode = INTEREST_SEARCH_MODES.has(String(source.search.mode)) ? String(source.search.mode) : 'manual';
+    if (source.search.intervalMs !== undefined) out.search.intervalMs = interestClamp(source.search.intervalMs, 600000, 86400000, 3600000);
+    if (source.search.maxSearchesPerRun !== undefined) out.search.maxSearchesPerRun = interestClamp(source.search.maxSearchesPerRun, 1, 20, 6);
+    if (source.search.maxSearchesTotal !== undefined) out.search.maxSearchesTotal = interestClamp(source.search.maxSearchesTotal, 1, 20, 20);
+    if (source.search.minScore !== undefined) out.search.minScore = interestClamp(source.search.minScore, 0, 1, 0.45);
+    if (source.search.maxFindingsPerRun !== undefined) out.search.maxFindingsPerRun = interestClamp(source.search.maxFindingsPerRun, 1, 20, 6);
+  }
+  return out;
+}
+
+function normalizeInterestGroup(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  if (source.enabled !== undefined) out.enabled = source.enabled !== false;
+  if (source.searchMode !== undefined)
+    out.searchMode = INTEREST_SEARCH_MODES.has(String(source.searchMode)) ? String(source.searchMode) : 'manual';
+  if (source.shareMode !== undefined)
+    out.shareMode = INTEREST_SHARE_MODES.has(String(source.shareMode)) ? String(source.shareMode) : 'off';
+  if (source.bring !== undefined) out.bring = source.bring !== false;
+  if (source.activeMin !== undefined) out.activeMin = interestClamp(source.activeMin, 0, 1, 0.15);
+  return out;
 }
 
 /** 正在跑的机器人进程（pgrep 一把梭，排除面板自己的 shell） */
@@ -789,6 +951,46 @@ function tailLog(n = 8) {
   catch { return []; }
 }
 
+/** 读某个日志文件 offset 之后的新增内容（重启前先记 offset，避免把旧进程的 Bot ready 当成新的） */
+function readLogSince(path, offset) {
+  try {
+    const size = statSync(path).size;
+    const from = size < offset ? 0 : offset;   // 文件被截断/轮转过就从 0 读
+    if (size <= from) return { text: '', size };
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(size - from);
+      const read = readSync(fd, buf, 0, buf.length, from);
+      return { text: buf.subarray(0, read).toString('utf8'), size };
+    }
+    finally { closeSync(fd); }
+  }
+  catch { return { text: '', size: 0 }; }
+}
+
+/**
+ * 等机器人就绪：必须同时满足「出现新 PID」和「新日志里有 Bot ready」。
+ * 只看 PID 会把 launchd 刚拉起、还没连上网关的进程误判成就绪；只看日志会把旧进程的输出误判成新的。
+ */
+async function waitForBotReady({ oldPids, logPath, offset, timeoutMs = 45000 }) {
+  const deadline = Date.now() + timeoutMs;
+  let pids = [];
+  let newLog = '';
+  let cursor = offset;               // 每次只读新增的部分，别把同一段反复追加
+  while (Date.now() < deadline) {
+    pids = botPids().filter((pid) => !oldPids.includes(pid));
+    if (logPath) {
+      const { text, size } = readLogSince(logPath, cursor);
+      if (size > cursor) cursor = size;
+      if (text) newLog += text;
+      if (newLog.length > 200_000) newLog = newLog.slice(-200_000);
+    }
+    if (pids.length > 0 && /Bot ready/.test(newLog)) return { ready: true, pids, log: newLog };
+    await sleep(1000);
+  }
+  return { ready: false, pids, log: newLog };
+}
+
 /**
  * 找管着机器人的 launchd 任务：~/Library/LaunchAgents 里 ProgramArguments 带「--profile qqbot」的那个。
  * 有它守护时不能用「杀掉再自己 spawn」的老办法：KeepAlive 会把被杀的那个立刻拉起来，
@@ -814,15 +1016,42 @@ function findLaunchdJob() {
 
 async function restartBot() {
   if (process.env.QQBOT_PANEL_RESTART !== 'on')
-    throw new Error('面板重启默认关闭。请在终端停止并运行 npm run bot；使用 launchd 时可显式启用。');
+    throw new Error('面板重启默认关闭：请用 ./panel-run.sh 启动面板（或在启动面板时设 QQBOT_PANEL_RESTART=on、QQBOT_LAUNCHD_LABEL=<launchd label>）。');
   if (process.platform !== 'darwin') throw new Error('面板重启仅支持显式配置的 macOS launchd 服务');
   const label = process.env.QQBOT_LAUNCHD_LABEL;
   const job = findLaunchdJob();
   if (!label || !job || job.label !== label)
     throw new Error('请配置与当前 profile 匹配的 QQBOT_LAUNCHD_LABEL；不会猜测或直接拉起其它进程');
+
+  const oldPids = botPids();
+  // 就绪日志：plist 的 StandardOutPath（当前 /tmp/qqbot-launchd.out），没有就退回 QQBOT_LOG
+  const logPath = job.out || LOG;
+  const offset = (() => { try { return statSync(logPath).size; } catch { return 0; } })();
+  console.log(`[panel] ${new Date().toISOString()} 重启机器人（launchd ${label}）：请求收到，旧 PID ${oldPids.join(',') || '无'}`);
+
   execFileSync('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${label}`], { encoding: 'utf8', timeout: 15000 });
-  return { mode: 'launchd', pids: botPids(), running: botPids().length > 0, ready: false,
-    note: '已请求守护服务重启；请检查就绪日志。不会额外启动第二个机器人。' };
+
+  const waitMs = Number(process.env.QQBOT_READY_TIMEOUT_MS ?? 45000);
+  const { ready, pids, log } = await waitForBotReady({ oldPids, logPath, offset, timeoutMs: waitMs });
+  const all = botPids();
+  const tail = log.trimEnd().split('\n').filter(Boolean).slice(-6);
+
+  if (all.length > 1)
+    console.log(`[panel] 警告：重启后发现 ${all.length} 个机器人进程（${all.join(',')}），可能重复连网关`);
+
+  console.log(`[panel] ${new Date().toISOString()} 重启机器人（launchd ${label}）：PID ${pids.join(',') || '无'}，ready=${ready}`);
+
+  return {
+    mode: 'launchd',
+    pids: all,
+    running: all.length > 0,
+    ready,
+    logPath,
+    tail,
+    note: ready
+      ? '已通过 launchd 重启，并在日志里看到 Bot ready。不会额外启动第二个机器人。'
+      : `已请求 launchd 重启，但 ${Math.round(waitMs / 1000)} 秒内没等到 Bot ready；看 ${logPath}`,
+  };
 }
 
 // ─────────────────────────── HTTP ───────────────────────────
@@ -846,6 +1075,67 @@ async function botControl(path, body, timeoutMs = 15000) {
   }
 }
 
+function dashboardData() {
+  const now = Date.now();
+  const horizon = now - 7 * 86400000;
+  const byDay = new Map();
+  const groups24 = new Set();
+  const lines = [];
+  try {
+    const stat = statSync(SEEN_GROUPS);
+    const size = Math.min(stat.size, 8 * 1024 * 1024);
+    const fd = openSync(SEEN_GROUPS, 'r');
+    try { const buf = Buffer.alloc(size); readSync(fd, buf, 0, size, Math.max(0, stat.size - size)); lines.push(...buf.toString('utf8').split('\n')); }
+    finally { closeSync(fd); }
+  } catch { /* no activity log yet */ }
+  let today = 0;
+  let triggeredToday = 0;
+  let latestActivityTs = 0;
+  for (const line of lines) {
+    const m = line.match(/^(\S+)\s+(\S+)\s+event=GROUP_MESSAGE_CREATE\b([^\n]*)$/);
+    if (!m) continue;
+    const ts = Date.parse(m[1]);
+    if (!Number.isFinite(ts) || ts < horizon || ts > now + 60000) continue;
+    const gid = m[2];
+    latestActivityTs = Math.max(latestActivityTs, ts);
+    const day = new Date(ts).toISOString().slice(0, 10);
+    const row = byDay.get(day) ?? { date: day, messages: 0, wake: 0 };
+    row.messages += 1;
+    if (/\bwake=true\b/.test(m[3])) row.wake += 1;
+    byDay.set(day, row);
+    if (day === new Date(now).toISOString().slice(0, 10)) { today += 1; if (/\bwake=true\b/.test(m[3])) triggeredToday += 1; }
+    if (ts >= now - 86400000) groups24.add(gid);
+  }
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date(now - i * 86400000).toISOString().slice(0, 10);
+    days.push(byDay.get(date) ?? { date, messages: 0, wake: 0 });
+  }
+  const modelStatus = readJsonFile(MODEL_STATUS, null);
+  const running = botPids().length > 0;
+  const modelUpdatedAt = modelStatus?.updatedAt ? Date.parse(modelStatus.updatedAt) : NaN;
+  const modelFresh = Number.isFinite(modelUpdatedAt) && now - modelUpdatedAt < 10 * 60 * 1000;
+  let storageReady = false;
+  try {
+    readFileSync(PATCH, 'utf8');
+    readPersonas();
+    readProfileDocument(PROFILE_DIR, 'groups-config');
+    readEventsStore();
+    storageReady = true;
+  } catch { /* A missing/invalid deployment config is reflected in health only. */ }
+  const checks = [
+    { id: 'bot', label: '机器人进程', ok: running, detail: running ? `运行中 · PID ${botPids().join(', ')}` : '未检测到运行中的机器人' },
+    { id: 'model', label: '模型调用', ok: modelStatus?.ok === true && modelFresh,
+      warning: modelStatus?.ok === true && !modelFresh,
+      detail: modelStatus?.ok === false ? `最近一次调用失败${modelStatus.lastError?.code ? ` · ${modelStatus.lastError.code}` : ''}` : (modelFresh ? '最近 10 分钟有状态上报' : '暂无新状态上报') },
+    { id: 'storage', label: '本地存储', ok: storageReady, detail: storageReady ? '配置与事件可读' : '部分配置或事件不可读' },
+    { id: 'activity', label: '消息活动', ok: latestActivityTs >= now - 86400000, detail: today > 0 ? `今天已收到 ${today} 条消息` : '近 24 小时没有消息活动' },
+  ];
+  const score = Math.round(checks.reduce((sum, check) => sum + (check.ok ? 25 : check.warning ? 12 : 0), 0));
+  const status = score >= 80 ? '状态良好' : score >= 60 ? '部分需要关注' : '存在异常';
+  return { ok: true, source: SEEN_GROUPS, generatedAt: new Date().toISOString(), todayMessages: today, activeGroups24h: groups24.size, triggeredToday, days, health: { score, status, checks } };
+}
+
 function overview() {
   const patchText = readText(PATCH);
   const parsed = readPatchConfig(patchText);
@@ -866,6 +1156,7 @@ function overview() {
     }
   }
 
+  const personaDoc = readPersonas();
   return {
     ok: true,
     paths: { patch: PATCH, personas: PERSONAS, groups: GROUPS, log: LOG, workdir: WORKDIR },
@@ -881,14 +1172,34 @@ function overview() {
       bin: resolveDsh() ?? null,
       log: LOG,
     },
+    modelStatus: readJsonFile(MODEL_STATUS, null),
     groups: readGroups(),
     wakeIndex: readWakeIndex(),
     owners: readOwners(),
     people: peopleIndex(),
-    personas: readPersonas(),
-    mtimes: { patch: mtimeOf(PATCH), personas: mtimeOf(PERSONAS) },
+    personas: personaDoc,
+    personaVersion: profileDocumentVersion(personaDoc),
+    mtimes: { patch: mtimeOf(PATCH) },
     warnings,
   };
+}
+
+// The HTML shell owns layout and overlays; page bodies live in app/pages/*.html.
+// Assemble them at request time so the panel remains dependency-free while pages
+// can evolve independently from the shared shell.
+function renderPanelIndex() {
+  let html = readFileSync(INDEX, 'utf8');
+  for (const page of PANEL_PAGES) {
+    const file = join(PANEL_APP, 'pages', `${page}.html`);
+    if (!existsSync(file)) throw new Error(`面板页面缺失：${page}`);
+    html = html.replace(`<!--PAGE:${page}-->`, readFileSync(file, 'utf8'));
+  }
+  for (const component of PANEL_COMPONENTS) {
+    const file = join(PANEL_APP, 'components', `${component}.html`);
+    if (!existsSync(file)) throw new Error(`面板组件缺失：${component}`);
+    html = html.replace(`<!--COMPONENT:${component}-->`, readFileSync(file, 'utf8'));
+  }
+  return html;
 }
 
 const server = createServer((req, res) => {
@@ -923,20 +1234,50 @@ const server = createServer((req, res) => {
     req.on('error', reject);
   });
 
+  // Shared panel assets are same-origin and intentionally limited to public/app.
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/app/')) {
+    const relative = url.pathname.slice('/app/'.length);
+    const file = resolve(PANEL_APP, relative);
+    if (!file.startsWith(`${PANEL_APP}${sep}`) || !existsSync(file)) return send(404, { ok: false, error: '面板资源不存在' });
+    const type = file.endsWith('.css') ? 'text/css; charset=utf-8'
+      : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8';
+    return send(200, readFileSync(file, 'utf8'), type);
+  }
+
   // 页面：任何非 /api 的 GET 都返回面板（换个路径可绕缓存）
   if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
     if (!existsSync(INDEX)) return send(500, { ok: false, error: 'index.html 缺失' });
     res.setHeader('set-cookie', `dsh_bot_session=${SESSION_COOKIE}; HttpOnly; SameSite=Strict; Path=/`);
-    return send(200, readFileSync(INDEX, 'utf8'), 'text/html; charset=utf-8');
+    try { return send(200, renderPanelIndex(), 'text/html; charset=utf-8'); }
+    catch (err) { return send(500, { ok: false, error: String(err?.message ?? err) }); }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/provider-settings') {
+    try { return send(200, { ok: true, settings: readQqbotProfileDocument(PROFILE_DIR, 'model-providers', profileDocumentTypes['model-providers']) }); }
+    catch { return send(500, { ok: false, error: '无法读取模型服务商配置' }); }
+  }
+  if (req.method === 'PUT' && url.pathname === '/api/provider-settings') {
+    readBody().then(body => {
+      const provider = String(body.provider || '').trim();
+      if (!provider || !/^[\w .-]{1,80}$/.test(provider)) throw new Error('服务商名称无效');
+      const current = withProfileDocuments(store => store.update('model-providers', settings => ({
+        ...settings,
+        [provider]: { ...(Object.hasOwn(settings, provider) ? settings[provider] : {}), baseUrl: String(body.baseUrl || '').trim(), protocol: String(body.protocol || 'openai-completions'), defaultModel: String(body.defaultModel || '').trim(), label: String(body.label || provider).trim() },
+      })));
+      return send(200, { ok: true, settings: current });
+    }).catch(err => send(400, { ok: false, error: String(err?.message ?? err) }));
+    return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/credentials') {
-    try { return send(200, { ok: true, ...credentialStatus(PROFILE_DIR) }); }
-    catch { return send(500, { ok: false, error: '无法读取本地密钥状态，请检查文件权限和格式' }); }
+    try { return send(200, { ok: true, ...withDshCredentialStatus(credentialStatus(PROFILE_DIR), dshModelCredentialNames()) }); }
+    catch { return send(500, { ok: false, error: '无法读取本地密钥状态，请检查凭据文件及 Python YAML 支持' }); }
   }
   if (req.method === 'PUT' && url.pathname === '/api/credentials') {
-    readBody().then(body => send(200, { ok: true, ...updateCredentials(PROFILE_DIR, body), restartRequired: true }))
-      .catch(() => send(400, { ok: false, error: '密钥未保存：请检查输入字段、本地文件格式和权限。不会显示密钥内容。' }));
+    readBody().then(body => {
+      const names = dshModelCredentialNames();
+      return send(200, { ok: true, ...withDshCredentialStatus(updateCredentials(PROFILE_DIR, body), names), restartRequired: true });
+    }).catch(() => send(400, { ok: false, error: '密钥未保存：请检查输入字段、本地文件格式和权限。不会显示密钥内容。' }));
     return;
   }
 
@@ -951,6 +1292,22 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // 语音合成：只读写配置，不发起任何合成请求。
+  if (req.method === 'GET' && url.pathname === '/api/tts') {
+    try { return send(200, { ok: true, settings: readTtsSettings(PROFILE_DIR) }); }
+    catch { return send(500, { ok: false, error: '无法读取语音配置，请检查本地文件格式和权限。不会显示文件内容。' }); }
+  }
+  if (req.method === 'PUT' && url.pathname === '/api/tts') {
+    readBody().then(body => send(200, { ok: true, settings: writeTtsSettings(PROFILE_DIR, body), restartRequired: false }))
+      .catch(() => send(400, { ok: false, error: '语音设置未保存：请检查服务项、顺序、枚举值与数值范围及本地文件权限。不会显示文件内容。' }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/dashboard') {
+    try { return send(200, dashboardData()); }
+    catch (err) { return send(500, { ok: false, error: String(err?.message ?? err) }); }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/overview') {
     try { return send(200, overview()); }
     catch (err) { return send(500, { ok: false, error: String(err?.message ?? err) }); }
@@ -958,6 +1315,10 @@ const server = createServer((req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/bot/status') {
     return send(200, { ok: true, running: botPids().length > 0, pids: botPids(), tail: tailLog(6) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/model/status') {
+    return send(200, { ok: true, status: readJsonFile(MODEL_STATUS, null) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/bot/restart') {
@@ -1025,7 +1386,7 @@ const server = createServer((req, res) => {
 
   if (req.method === 'PUT' && url.pathname === '/api/wake-index') {
     readBody().then((body) => {
-      const result = writeWakeIndex(body.groupOpenid, body.value, body.baseMtimeMs);
+      const result = writeWakeIndex(body.groupOpenid, body.value, body.baseVersion);
       console.log(`[panel] ${new Date().toISOString()} 唤醒指数已保存：${body.groupOpenid} = ${result.map[body.groupOpenid] ?? '默认'}`);
       return send(200, { ok: true, ...result, restartRequired: false });
     }).catch((err) => {
@@ -1035,19 +1396,15 @@ const server = createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'PUT' && url.pathname === '/api/personas') {    readBody().then((body) => {
-      const data = body.data;
+  if (req.method === 'PUT' && url.pathname === '/api/personas') {
+    readBody().then(({ data, baseVersion }) => {
       validatePersonas(data);
-
-      const current = mtimeOf(PERSONAS);
-      if (typeof body.baseMtimeMs === 'number' && body.baseMtimeMs !== 0
-        && Math.abs(current - body.baseMtimeMs) > 1)
-        return send(409, { ok: false, error: '人格文件已被别处修改，请先刷新页面再保存。' });
-
-      const text = `${JSON.stringify(data, null, 2)}\n`;
-      const backup = writeWithBackup(PERSONAS, text);
-      return send(200, { ok: true, backup, restartRequired: false, mtimeMs: mtimeOf(PERSONAS) });
-    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+      const saved = withProfileDocuments(db => db.update('personas', current => {
+        requireProfileDocumentVersion(current, baseVersion, '人格配置');
+        return data;
+      }));
+      return send(200, { ok: true, version: profileDocumentVersion(saved), restartRequired: false });
+    }).catch(err => send(err?.status === 409 ? 409 : 400, { ok: false, error: String(err?.message ?? err) }));
     return;
   }
 
@@ -1113,10 +1470,430 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // ── 私人记忆库：整套人格范围；旧按群范围保留至手动切换 ──
+  const memoryDbPath = () => INTEREST_DB;
+  const memoryMarker = (id) => `pm:${id}`;
+  const ensureMemoryTables = (db) => {
+    db.exec(`create table if not exists bot_memory_library (
+      id integer primary key autoincrement,
+      topic text not null default '',
+      text text not null,
+      tags text not null default '',
+      pinned integer not null default 0,
+      created_at integer not null,
+      updated_at integer not null
+    )`);
+    // 老库没有 topic 列，补一列，不重建表
+    try {
+      const cols = db.prepare('pragma table_info(bot_memory_library)').all().map((row) => String(row.name ?? ''));
+      if (!cols.includes('topic'))
+        db.exec("alter table bot_memory_library add column topic text not null default ''");
+    }
+    catch { /* 改不了列就按无主题处理 */ }
+    db.exec(`create table if not exists bot_memory_groups (
+      memory_id integer not null,
+      group_openid text not null,
+      primary key (memory_id, group_openid)
+    )`);
+    db.exec('create index if not exists idx_bot_memory_groups_group on bot_memory_groups(group_openid)');
+    // 旧片段范围只保留用于提示，不再参与召回。
+    db.exec(`create table if not exists bot_memory_module_scope (
+      memory_id integer primary key, module_ids text not null
+    )`);
+    db.exec(`create table if not exists bot_memory_persona_scope (
+      memory_id integer primary key, persona_ids text not null
+    )`);
+    // 仅旧按群记忆继续使用 self_memories 投影。
+    db.exec(`create table if not exists self_memories (
+      id integer primary key autoincrement,
+      topic text not null,
+      summary text not null,
+      detail text not null default '',
+      tags text not null default '',
+      created_at integer not null,
+      updated_at integer not null,
+      last_used_at integer not null default 0,
+      use_count integer not null default 0
+    )`);
+    db.exec('create unique index if not exists self_memories_topic on self_memories(topic)');
+  };
+
+  /** 内容没有主题时，取第一行当 topic */
+  const privateMemoryTopic = (text, id) => {
+    const line = String(text ?? '').split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+    return line.slice(0, 40) || `记忆 #${id}`;
+  };
+
+  const hasMemoryTable = (db, name) => Boolean(db.prepare("select 1 from sqlite_master where type = 'table' and name = ?").get(name));
+  const clearGroupProjections = (db, marker) => {
+    if (!hasMemoryTable(db, 'memories')) return;
+    const projected = db.prepare("select id from memories where (' ' || tags || ' ') like ?").all(`% ${marker} %`);
+    const vectors = hasMemoryTable(db, 'memory_vectors');
+    for (const row of projected) {
+      db.prepare('delete from memories where id = ?').run(row.id);
+      if (vectors) db.prepare('delete from memory_vectors where memory_id = ?').run(row.id);
+    }
+  };
+
+  const syncPrivateMemory = (db, id) => {
+    const lib = db.prepare('select * from bot_memory_library where id = ?').get(id);
+    if (!lib) return;
+    const groups = db.prepare('select group_openid from bot_memory_groups where memory_id = ?').all(id);
+    const marker = memoryMarker(id);
+    clearGroupProjections(db, marker);
+    const existing = db.prepare("select * from self_memories where (' ' || tags || ' ') like ? limit 1")
+      .get(`% ${marker} %`);
+    if (groups.length === 0 || db.prepare('select 1 from bot_memory_persona_scope where memory_id = ?').get(id)
+      || db.prepare('select 1 from bot_memory_module_scope where memory_id = ?').get(id)) {
+      if (existing)
+        db.prepare('delete from self_memories where id = ?').run(existing.id);
+      return;
+    }
+
+    const text = String(lib.text ?? '').trim();
+    const topic = String(lib.topic ?? '').trim().slice(0, 40) || privateMemoryTopic(text, id);
+    // self_memories 的概括上限 160 字；更长的正文放 detail，注入时只截前 200 字
+    const summary = text.length > 160 ? text.slice(0, 160) : text;
+    const detail = text.length > 160 ? text : '';
+    const tags = [String(lib.tags ?? '').trim(), marker].filter(Boolean).join(' ');
+    const now = Date.now();
+
+    let nextTopic = topic;
+    const clash = db.prepare('select id from self_memories where lower(topic) = lower(?) and id <> ? limit 1')
+      .get(nextTopic, Number(existing?.id ?? 0));
+    if (clash)
+      nextTopic = `${nextTopic.slice(0, 34)} #${id}`;
+
+    if (existing) {
+      db.prepare('update self_memories set topic = ?, summary = ?, detail = ?, tags = ?, updated_at = ? where id = ?')
+        .run(nextTopic, summary, detail, tags, now, existing.id);
+      return;
+    }
+    db.prepare('insert into self_memories (topic, summary, detail, tags, created_at, updated_at, last_used_at, use_count) values (?, ?, ?, ?, ?, ?, 0, 0)')
+      .run(nextTopic, summary, detail, tags, now, now);
+  };
+  const readMemoryLibrary = (db, gid) => {
+    const rows = db.prepare('select * from bot_memory_library order by pinned desc, updated_at desc').all();
+    const links = db.prepare('select memory_id, group_openid from bot_memory_groups').all();
+    const byId = new Map();
+    const scopes = new Map(db.prepare('select * from bot_memory_persona_scope').all().map(
+      (row) => [Number(row.memory_id), JSON.parse(row.persona_ids)],
+    ));
+    const paused = new Set(db.prepare("select memory_id from bot_memory_module_scope where json_array_length(module_ids) > 0")
+      .all().map((row) => Number(row.memory_id)));
+    for (const link of links) {
+      const key = Number(link.memory_id);
+      if (!byId.has(key))
+        byId.set(key, []);
+      byId.get(key).push(String(link.group_openid ?? ''));
+    }
+    return rows
+      .map((row) => ({
+        id: Number(row.id),
+        topic: String(row.topic ?? ''),
+        text: String(row.text ?? ''),
+        tags: String(row.tags ?? ''),
+        pinned: Number(row.pinned) === 1,
+        scopeType: scopes.has(Number(row.id)) ? 'personas' : paused.has(Number(row.id)) ? 'legacy-modules' : byId.has(Number(row.id)) ? 'legacy-groups' : 'personas',
+        personaIds: scopes.get(Number(row.id)) ?? [],
+        groups: scopes.has(Number(row.id)) || paused.has(Number(row.id)) ? [] : byId.get(Number(row.id)) ?? [],
+        createdAt: new Date(Number(row.created_at)).toISOString(),
+        updatedAt: new Date(Number(row.updated_at)).toISOString(),
+      }))
+      .filter((item) => !gid || item.groups.includes(gid));
+  };
+  const privateMemoryTags = (value) => String(value ?? '').trim().slice(0, 300)
+    .split(/\s+/).filter((tag) => !/^pm:\d+$/i.test(tag)).join(' ');
+  const memoryPersonaCatalog = () => {
+    const doc = readPersonas();
+    const entries = doc.personas ?? {};
+    // Match the studio ordering and group identical assembled profiles. Do not offer an inherited placeholder.
+    const keys = new Set(['default', '*', ...readGroups().map(({ id }) => id), ...Object.keys(entries)]);
+    const profiles = new Map();
+    for (const key of keys) {
+      if (!Object.hasOwn(entries, key)) continue;
+      const entry = entries[key];
+      const modules = Array.isArray(entry) ? entry : entry?.modules;
+      if (!Array.isArray(modules) || !modules.some((id) => typeof doc.modules?.[id] === 'string' && doc.modules[id].trim())) continue;
+      const archetype = entry?.archetype ?? '';
+      // Composition is the studio's identity, not the group key (group assignment can change).
+      const id = JSON.stringify([modules, archetype]);
+      if (!profiles.has(id)) profiles.set(id, { id, key, name: typeof entry?.name === 'string' ? entry.name.trim() : '', modules: modules.slice(), archetype, firstModule: modules[0] });
+    }
+    return [...profiles.values()];
+  };
+
+  if (req.method === 'GET' && url.pathname === '/api/memory-library/personas') {
+    try { return send(200, { ok: true, profiles: memoryPersonaCatalog() }); }
+    catch (err) { return send(500, { ok: false, error: `读取已保存的人格失败：${err.message}` }); }
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/memory-library/scope') {
+    readBody().then(async (body) => {
+      const id = Number(body?.id);
+      if (!Number.isInteger(id) || id <= 0 || !Array.isArray(body?.personaIds)
+        || body.personaIds.some((value) => typeof value !== 'string'))
+        return send(400, { ok: false, error: '请输入有效的记忆 id 和人格列表。' });
+      const personaIds = [...new Set(body.personaIds)];
+      const { DatabaseSync } = await import('node:sqlite');
+      const known = new Set(memoryPersonaCatalog().map(({ id }) => id));
+      if (personaIds.some((personaId) => !known.has(personaId)))
+        return send(409, { ok: false, error: '人格列表已变化，请关闭弹窗后重新打开。' });
+      const dbPath = memoryDbPath();
+      if (!existsSync(dbPath)) return send(404, { ok: false, error: '记忆不存在。' });
+      const db = new DatabaseSync(dbPath);
+      try {
+        ensureMemoryTables(db);
+        db.exec('begin immediate');
+        if (!db.prepare('select 1 from bot_memory_library where id = ?').get(id)) {
+          db.exec('rollback');
+          return send(404, { ok: false, error: '记忆不存在。' });
+        }
+        db.prepare(`insert into bot_memory_persona_scope (memory_id, persona_ids) values (?, ?)
+          on conflict(memory_id) do update set persona_ids = excluded.persona_ids`).run(id, JSON.stringify(personaIds));
+        db.prepare('delete from bot_memory_groups where memory_id = ?').run(id);
+        db.prepare('delete from bot_memory_module_scope where memory_id = ?').run(id);
+        syncPrivateMemory(db, id);
+        db.exec('commit');
+        return send(200, { ok: true, personaIds });
+      }
+      catch (err) {
+        try { db.exec('rollback'); } catch { /* 无活动事务 */ }
+        throw err;
+      }
+      finally { db.close(); }
+    }).catch((err) => send(500, { ok: false, error: err.message }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/memory-library') {
+    const gid = url.searchParams.get('gid') ?? '';
+    const dbPath = memoryDbPath();
+    if (!existsSync(dbPath))
+      return send(200, { ok: true, memories: [] });
+    import('node:sqlite').then(({ DatabaseSync }) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        ensureMemoryTables(db);
+        return send(200, { ok: true, memories: readMemoryLibrary(db, gid) });
+      }
+      finally {
+        db.close();
+      }
+    }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/memory-library') {
+    readBody().then((body) => {
+      const topic = String(body?.topic ?? '').trim().slice(0, 40);
+      const text = String(body?.text ?? '').trim();
+      const tags = privateMemoryTags(body?.tags);
+      const pinned = body?.pinned === true ? 1 : 0;
+      if (!text)
+        return send(400, { ok: false, error: '内容必填' });
+      if (text.length > 4000)
+        return send(400, { ok: false, error: '内容太长（上限 4000 字）' });
+      const dbPath = memoryDbPath();
+      import('node:sqlite').then(({ DatabaseSync }) => {
+        mkdirSync(dirname(dbPath), { recursive: true });
+        const db = new DatabaseSync(dbPath);
+        try {
+          ensureMemoryTables(db);
+          db.exec('begin');
+          const now = Date.now();
+          const info = db.prepare('insert into bot_memory_library (topic, text, tags, pinned, created_at, updated_at) values (?, ?, ?, ?, ?, ?)')
+            .run(topic, text, tags, pinned, now, now);
+          const id = Number(info.lastInsertRowid);
+          db.prepare("insert into bot_memory_persona_scope (memory_id, persona_ids) values (?, '[]')").run(id);
+          db.exec('commit');
+          return send(200, { ok: true, id });
+        }
+        catch (err) {
+          try { db.exec('rollback'); } catch { /* 忽略 */ }
+          throw err;
+        }
+        finally {
+          db.close();
+        }
+      }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/memory-library') {
+    readBody().then((body) => {
+      const id = Number(body?.id);
+      const topic = String(body?.topic ?? '').trim().slice(0, 40);
+      const text = String(body?.text ?? '').trim();
+      const tags = privateMemoryTags(body?.tags);
+      const pinned = body?.pinned === true ? 1 : 0;
+      if (!Number.isInteger(id) || id <= 0 || !text)
+        return send(400, { ok: false, error: 'id 和内容必填' });
+      if (text.length > 4000)
+        return send(400, { ok: false, error: '内容太长（上限 4000 字）' });
+      const dbPath = memoryDbPath();
+      if (!existsSync(dbPath))
+        return send(400, { ok: false, error: '长期记忆库还不存在。' });
+      import('node:sqlite').then(({ DatabaseSync }) => {
+        const db = new DatabaseSync(dbPath);
+        try {
+          ensureMemoryTables(db);
+          db.exec('begin');
+          const info = db.prepare('update bot_memory_library set topic = ?, text = ?, tags = ?, pinned = ?, updated_at = ? where id = ?')
+            .run(topic, text, tags, pinned, Date.now(), id);
+          if (Number(info.changes) === 0) {
+            db.exec('rollback');
+            return send(404, { ok: false, error: '没有这条记忆。' });
+          }
+          syncPrivateMemory(db, id);
+          db.exec('commit');
+          return send(200, { ok: true });
+        }
+        catch (err) {
+          try { db.exec('rollback'); } catch { /* 忽略 */ }
+          throw err;
+        }
+        finally {
+          db.close();
+        }
+      }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/memory-library') {
+    const id = Number(url.searchParams.get('id'));
+    if (!Number.isInteger(id) || id <= 0)
+      return send(400, { ok: false, error: 'id 必填' });
+    const dbPath = memoryDbPath();
+    if (!existsSync(dbPath))
+      return send(404, { ok: false, error: '长期记忆库还不存在。' });
+    import('node:sqlite').then(({ DatabaseSync }) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        ensureMemoryTables(db);
+        db.exec('begin');
+        const marker = memoryMarker(id);
+        clearGroupProjections(db, marker);
+        db.prepare("delete from self_memories where (' ' || tags || ' ') like ?").run(`% ${marker} %`);
+        db.prepare('delete from bot_memory_groups where memory_id = ?').run(id);
+        db.prepare('delete from bot_memory_module_scope where memory_id = ?').run(id);
+        db.prepare('delete from bot_memory_persona_scope where memory_id = ?').run(id);
+        db.prepare('delete from bot_memory_library where id = ?').run(id);
+        db.exec('commit');
+        return send(200, { ok: true });
+      }
+      catch (err) {
+        try { db.exec('rollback'); } catch { /* 忽略 */ }
+        throw err;
+      }
+      finally {
+        db.close();
+      }
+    }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  // ── 群内自动记忆：机器人自己攒的，按群查看 / 编辑 / 删除 ──
+  if (req.method === 'GET' && url.pathname === '/api/memories') {
+    const gid = url.searchParams.get('gid') ?? '';
+    const q = (url.searchParams.get('q') ?? '').trim();
+    if (!gid)
+      return send(400, { ok: false, error: 'gid 必填' });
+    const dbPath = memoryDbPath();
+    if (!existsSync(dbPath))
+      return send(200, { ok: true, memories: [] });
+    import('node:sqlite').then(({ DatabaseSync }) => {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        if (!hasMemoryTable(db, 'memories')) return send(200, { ok: true, memories: [] });
+        const params = [`qq:group:${gid}`];
+        let where = "scope = ? and tags not like '%pm:%'";
+        if (q !== '') {
+          where += ' and (text like ? or tags like ?)';
+          params.push(`%${q}%`, `%${q}%`);
+        }
+        const rows = db.prepare(`select id, text, tags, pinned, created_at, updated_at from memories where ${where} order by pinned desc, updated_at desc limit 300`).all(...params);
+        return send(200, {
+          ok: true,
+          memories: rows.map((row) => ({
+            id: Number(row.id),
+            text: String(row.text ?? ''),
+            tags: String(row.tags ?? ''),
+            pinned: Number(row.pinned) === 1,
+            createdAt: new Date(Number(row.created_at)).toISOString(),
+            updatedAt: new Date(Number(row.updated_at)).toISOString(),
+            ...memoryPresentation(row),
+          })),
+        });
+      }
+      finally {
+        db.close();
+      }
+    }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/memories') {
+    readBody().then((body) => {
+      const id = Number(body?.id);
+      const gid = String(body?.gid ?? '').trim();
+      const text = String(body?.text ?? '').trim();
+      const tags = String(body?.tags ?? '').trim().slice(0, 300);
+      const pinned = body?.pinned === true ? 1 : 0;
+      if (!Number.isInteger(id) || id <= 0 || !gid || !text)
+        return send(400, { ok: false, error: 'id、群和内容必填' });
+      if (text.length > 4000)
+        return send(400, { ok: false, error: '内容太长（上限 4000 字）' });
+      const dbPath = memoryDbPath();
+      if (!existsSync(dbPath))
+        return send(400, { ok: false, error: '长期记忆库还不存在。' });
+      import('node:sqlite').then(({ DatabaseSync }) => {
+        const db = new DatabaseSync(dbPath);
+        try {
+          const info = db.prepare("update memories set text = ?, tags = ?, pinned = ?, updated_at = ?, revision = revision + 1 where id = ? and scope = ? and tags not like '%pm:%'")
+            .run(text, tags, pinned, Date.now(), id, `qq:group:${gid}`);
+          if (Number(info.changes) === 0)
+            return send(404, { ok: false, error: '没有这条记忆，或它是记忆库投影（请到记忆库编辑）。' });
+          try { db.prepare('delete from memory_vectors where memory_id = ?').run(id); } catch { /* 表不存在 */ }
+          return send(200, { ok: true });
+        }
+        finally {
+          db.close();
+        }
+      }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/memories') {
+    const id = Number(url.searchParams.get('id'));
+    const gid = url.searchParams.get('gid') ?? '';
+    if (!Number.isInteger(id) || id <= 0 || !gid)
+      return send(400, { ok: false, error: 'id 和 gid 必填' });
+    const dbPath = memoryDbPath();
+    if (!existsSync(dbPath))
+      return send(404, { ok: false, error: '长期记忆库还不存在。' });
+    import('node:sqlite').then(({ DatabaseSync }) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        const info = db.prepare("delete from memories where id = ? and scope = ? and tags not like '%pm:%'").run(id, `qq:group:${gid}`);
+        if (Number(info.changes) === 0)
+          return send(404, { ok: false, error: '没有这条记忆，或它是记忆库投影（请到记忆库删除）。' });
+        try { db.prepare('delete from memory_vectors where memory_id = ?').run(id); } catch { /* 表不存在 */ }
+        return send(200, { ok: true });
+      }
+      finally {
+        db.close();
+      }
+    }).catch((err) => send(500, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/people') {
     try {
-      const data = readPeopleStore();
-      return send(200, { ok: true, path: PEOPLE, data, mtimeMs: mtimeOf(PEOPLE), groupsPath: GROUPS_META });
+      return send(200, { ok: true, path: PEOPLE, ...readPeopleSnapshot(), groupsPath: GROUPS_META });
     }
     catch (err) {
       return send(500, { ok: false, error: String(err?.message ?? err) });
@@ -1125,27 +1902,86 @@ const server = createServer((req, res) => {
 
   if (req.method === 'PUT' && url.pathname === '/api/people') {
     readBody().then((body) => {
-      const current = mtimeOf(PEOPLE);
-      if (typeof body.baseMtimeMs === 'number' && body.baseMtimeMs !== 0
-        && Math.abs(current - body.baseMtimeMs) > 1)
-        return send(409, { ok: false, error: '档案文件已被其他地方修改，请先重新读取再保存。' });
-
-      const result = writePeopleStore(body.data);
+      const result = writePeopleStore(body.data, body.baseVersion);
       console.log(`[panel] ${new Date().toISOString()} 群成员档案已保存：${result.count} 人`);
-      return send(200, { ok: true, ...result, path: PEOPLE, mtimeMs: mtimeOf(PEOPLE) });
-    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+      return send(200, { ok: true, ...result, path: PEOPLE });
+    }).catch((err) => send(err?.status === 409 ? 409 : 400, { ok: false, error: String(err?.message ?? err) }));
     return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/groups') {
-    return send(200, { ok: true, groups: readGroups(), path: GROUPS_META });
+    try { return send(200, { ok: true, groups: readQqbotGroupDirectory(PROFILE_DIR), path: GROUPS_META }); }
+    catch { return send(500, { ok: false, error: '无法读取群列表' }); }
   }
 
   if (req.method === 'PUT' && url.pathname === '/api/groups') {
     readBody().then((body) => {
       const result = writeGroupsMeta(body.groups);
       console.log(`[panel] ${new Date().toISOString()} 群列表已保存：${result.count} 个群`);
-      return send(200, { ok: true, ...result, path: GROUPS_META, groups: readGroups() });
+      return send(200, { ok: true, ...result, path: GROUPS_META });
+    }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
+    return;
+  }
+
+  // 群兴趣画像：总开关 / 搜索模式 / 分享模式 / 每个群的话题和发现
+  if (req.method === 'GET' && url.pathname === '/api/interest') {
+    try {
+      const gid = String(url.searchParams.get('gid') ?? '').trim();
+      const config = readInterestConfig();
+      const state = readInterestState();
+      const activity = readInterestActivity();
+      const db = openInterestDb();
+      const counts = db ? interestCounts(db) : new Map();
+      const meta = new Map(readGroups().map((group) => [String(group.id ?? ''), String(group.name ?? '')]));
+      for (const id of Object.keys(config.groups ?? {})) {
+        if (!meta.has(id)) meta.set(id, id);
+      }
+      const groups = [...meta.entries()].map(([id, name]) => ({
+        gid: id,
+        name,
+        activity: Number(activity.groups[id]?.score ?? 0),
+        messages24h: Number(activity.groups[id]?.msg24h ?? 0),
+        topics: counts.get(id)?.topics ?? 0,
+        findings: counts.get(id)?.findings ?? 0,
+        config: config.groups?.[id] ?? {},
+        state: state.groups?.[id] ?? {},
+      })).sort((a, b) => (b.activity - a.activity) || a.name.localeCompare(b.name, 'zh'));
+      const detail = gid !== '' ? interestGroupDetail(db, gid) : { topics: [], findings: [], runs: [] };
+      try { db?.close(); } catch { /* 忽略 */ }
+      return send(200, {
+        ok: true,
+        config,
+        searchMode: String(config.search?.mode ?? config.searchMode ?? 'manual'),
+        shareMode: String(config.shareMode ?? 'off'),
+        activityAt: activity.at,
+        groups,
+        ...detail,
+        paths: { config: INTEREST_CONFIG, db: INTEREST_DB },
+      });
+    }
+    catch (err) {
+      return send(500, { ok: false, error: String(err?.message ?? err) });
+    }
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/interest') {
+    readBody().then(async (body) => {
+      const config = withProfileDocuments(db => db.update('interest-config', current => {
+        if (body && typeof body.gid === 'string' && body.gid.trim() !== '') {
+          const gid = body.gid.trim();
+          const groups = current.groups && typeof current.groups === 'object' ? { ...current.groups } : {};
+          const patch = normalizeInterestGroup(body.group);
+          groups[gid] = { ...(groups[gid] ?? {}), ...patch };
+          const next = { ...current, groups };
+          return next;
+        }
+        const patch = normalizeInterestConfig(body?.config ?? body);
+        const next = { ...current, ...patch };
+        if (patch.search)
+          next.search = { ...(current.search && typeof current.search === 'object' ? current.search : {}), ...patch.search };
+        return next;
+      }));
+      return send(200, { ok: true, config, backup: null });
     }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
     return;
   }
@@ -1153,7 +1989,7 @@ const server = createServer((req, res) => {
   // 图库：收图/放图名单（只读，供面板显示）
   if (req.method === 'GET' && url.pathname === '/api/media/allow') {
     try {
-      const parsed = JSON.parse(readFileSync(MEDIA_ALLOW, 'utf8'));
+      const parsed = readProfileDocument(PROFILE_DIR, 'media-allow');
       return send(200, { ok: true, people: Array.isArray(parsed.people) ? parsed.people : [] });
     }
     catch {
@@ -1161,102 +1997,112 @@ const server = createServer((req, res) => {
     }
   }
 
-  // 角色模块：按人读三个模块的生效状态
+  // 角色模块：按人读各模块的生效状态
   if (req.method === 'GET' && url.pathname === '/api/modules') {
-    const people = readPeopleStore().people;
-    const out = {};
-    for (const person of people) {
-      if (!person?.name) continue;
-      out[person.name] = effectiveModuleFor(person);
+    try {
+      const people = readPeopleStore().people;
+      const docs = Object.fromEntries(['person-modules', 'media-allow', 'role-skills'].map(type => [type, readProfileDocument(PROFILE_DIR, type)]));
+      const out = {};
+      for (const person of people) {
+        if (!person?.name) continue;
+        out[person.name] = effectiveModuleFor(person, docs);
+      }
+        const roleDoc = docs['role-skills'];
+        // 能力型技能（如生图权限）不是语言风格，不列入「风格」下拉。
+        const skills = (Array.isArray(roleDoc.skills) ? roleDoc.skills : [])
+          .filter((skill) => skill && skill.enabled !== false && skill.kind !== 'capability')
+          .map((skill) => ({ id: String(skill.id ?? ''), name: String(skill.name ?? skill.id ?? '') }));
+        return send(200, { ok: true, people: out, skills });
+      } catch (err) { return send(500, { ok: false, error: String(err?.message ?? err) }); }
     }
-    const roleDoc = readJsonFile(ROLE_REGISTRY, { skills: [] });
-    // 能力型技能（如生图权限）不是语言风格，不列入「风格」下拉。
-    const skills = (Array.isArray(roleDoc.skills) ? roleDoc.skills : [])
-      .filter((skill) => skill && skill.enabled !== false && skill.kind !== 'capability')
-      .map((skill) => ({ id: String(skill.id ?? ''), name: String(skill.name ?? skill.id ?? '') }));
-    return send(200, { ok: true, people: out, skills });
-  }
 
-  // 角色模块：保存一个人的三个模块，并同步收图名单 / 角色技能
-  if (req.method === 'PUT' && url.pathname === '/api/modules') {
-    readBody().then((body) => {
-      const name = String(body.name ?? '').trim();
-      const person = readPeopleStore().people.find((item) => item.name === name);
-      if (!person)
-        return send(404, { ok: false, error: `档案里没有「${name}」` });
-      const input = body.modules && typeof body.modules === 'object' ? body.modules : {};
-      const categories = Array.isArray(input.collectImages?.categories)
-        ? [...new Set(input.collectImages.categories.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(0, 5)
-        : [];
-      const topics = Array.isArray(input.topics?.topics)
-        ? [...new Set(input.topics.topics.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(0, 10)
-        : [];
-      const styleSkill = String(input.style?.skill ?? '').trim();
-      const roleDocForSkill = readJsonFile(ROLE_REGISTRY, { skills: [] });
-      const skillExists = (Array.isArray(roleDocForSkill.skills) ? roleDocForSkill.skills : [])
-        .some((skill) => skill.id === styleSkill && skill.kind !== 'capability');
-      const next = {
-        collectImages: { enabled: input.collectImages?.enabled === true, categories },
-        topics: { enabled: input.topics?.enabled === true, topics },
-        style: { enabled: input.style?.enabled === true && styleSkill !== '' && skillExists, skill: styleSkill },
-        imageGen: { enabled: input.imageGen?.enabled === true },
-      };
+    // 角色模块：保存一个人的各模块，并同步收图名单 / 角色技能
+    if (req.method === 'PUT' && url.pathname === '/api/modules') {
+      readBody().then((body) => {
+        const name = String(body.name ?? '').trim();
+        const person = readPeopleStore().people.find((item) => item.name === name);
+        if (!person)
+          return send(404, { ok: false, error: `档案里没有「${name}」` });
+        const input = body.modules && typeof body.modules === 'object' ? body.modules : {};
+        const categories = Array.isArray(input.collectImages?.categories)
+          ? [...new Set(input.collectImages.categories.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(0, 5)
+          : [];
+        const topics = Array.isArray(input.topics?.topics)
+          ? [...new Set(input.topics.topics.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(0, 10)
+          : [];
+        const styleSkill = String(input.style?.skill ?? '').trim();
+        const saved = withProfileDocuments(db => db.updateMany(['person-modules', 'media-allow', 'role-skills'], docs => {
+        const roleDoc = docs['role-skills'];
+        if (!Array.isArray(roleDoc.skills)) roleDoc.skills = [];
+        const skillExists = roleDoc.skills.some(skill => skill?.id === styleSkill && skill.kind !== 'capability');
+        const next = {
+          collectImages: { enabled: input.collectImages?.enabled === true, categories },
+          topics: { enabled: input.topics?.enabled === true, topics },
+          style: { enabled: input.style?.enabled === true && styleSkill !== '' && skillExists, skill: styleSkill },
+          imageGen: { enabled: input.imageGen?.enabled === true },
+          voiceGen: { enabled: input.voiceGen?.enabled === true },
+        };
 
-      const modulesDoc = readJsonFile(MODULES, { people: {} });
-      if (!modulesDoc.people || typeof modulesDoc.people !== 'object') modulesDoc.people = {};
-      modulesDoc.people[name] = next;
-      modulesDoc._说明 = modulesDoc._说明 ?? '按人启用的三个通用模块：collectImages / topics / style';
-      const moduleBackup = writeWithBackup(MODULES, `${JSON.stringify(modulesDoc, null, 2)}\n`);
+        const modulesDoc = docs['person-modules'];
+        modulesDoc.people = { ...modulesDoc.people, [name]: next };
 
-      // 收图模块 → 收图名单（媒体库读的是这份）
-      const allowDoc = readJsonFile(MEDIA_ALLOW, { people: [] });
-      const openids = Array.isArray(person.openids) ? person.openids : [];
-      const groups = Array.isArray(person.groups) ? person.groups : [];
-      let allowPeople = (Array.isArray(allowDoc.people) ? allowDoc.people : []).filter((entry) =>
-        entry && !(entry.name === name || (Array.isArray(entry.openids) && entry.openids.some((id) => openids.includes(id)))));
-      if (next.collectImages.enabled) {
-        allowPeople.push({ name, openids, groups, categories, all: false });
-      }
-      const allowBackup = writeWithBackup(MEDIA_ALLOW, `${JSON.stringify({
-        _说明: '收图/放图名单：名单里的人发图时按 categories 做视觉分类，只收对应类别；梗图/表情包排除。groups 为空表示所有群。',
-        people: allowPeople,
-      }, null, 2)}\n`);
-
-      // 语言风格模块 → 角色技能注册表
-      const roleDoc = readJsonFile(ROLE_REGISTRY, { skills: [] });
-      if (!Array.isArray(roleDoc.skills)) roleDoc.skills = [];
-      for (const skill of roleDoc.skills) {
-        if (!Array.isArray(skill.audiences)) skill.audiences = [];
-        skill.audiences = skill.audiences.filter((audience) =>
-          audience && !(audience.person === name || (Array.isArray(audience.openids) && audience.openids.some((id) => openids.includes(id)))));
-      }
-      if (next.style.enabled) {
-        const skill = roleDoc.skills.find((item) => item.id === styleSkill);
-        if (skill) skill.audiences.push({ person: name, openids, groups, default: true });
-      }
-      // 生图模块 → 生图技能（imagePermission.skill，缺省 image-gen）的受众；
-      // 技能不存在就建一个纯权限技能（没有 SKILL.md，不注入提示词）。
-      const imageSkillId = imageSkillIdOf(roleDoc);
-      let imageSkill = roleDoc.skills.find((item) => item && String(item.id ?? '') === imageSkillId);
-      if (imageSkill && Array.isArray(imageSkill.audiences)) {
-        imageSkill.audiences = imageSkill.audiences.filter((audience) =>
-          audience && !(audience.person === name || (Array.isArray(audience.openids) && audience.openids.some((id) => openids.includes(id)))));
-      }
-      if (next.imageGen.enabled) {
-        if (!imageSkill) {
-          imageSkill = {
-            id: imageSkillId, name: '生图', category: '能力', kind: 'capability', enabled: true,
-            description: '允许让机器人画图的人。只认这个技能的受众，不注入提示词。', audiences: [],
-          };
-          roleDoc.skills.push(imageSkill);
+        // 收图模块 → 收图名单（媒体库读的是这份）
+        const allowDoc = docs['media-allow'];
+        const openids = Array.isArray(person.openids) ? person.openids : [];
+        const groups = Array.isArray(person.groups) ? person.groups : [];
+        const allowPeople = (Array.isArray(allowDoc.people) ? allowDoc.people : []).filter((entry) =>
+          entry && !(entry.name === name || (Array.isArray(entry.openids) && entry.openids.some((id) => openids.includes(id)))));
+        if (next.collectImages.enabled) {
+          allowPeople.push({ name, openids, groups, categories, all: false });
         }
-        if (!Array.isArray(imageSkill.audiences)) imageSkill.audiences = [];
-        imageSkill.audiences.push({ person: name, openids, groups, default: true });
-      }
-      const roleBackup = writeWithBackup(ROLE_REGISTRY, `${JSON.stringify(roleDoc, null, 2)}\n`);
+        allowDoc.people = allowPeople;
 
-      console.log(`[panel] ${new Date().toISOString()} 保存角色模块 ${name}: 收图=${next.collectImages.enabled} 主题=${next.topics.enabled} 风格=${next.style.enabled ? styleSkill : '-'}`);
-      return send(200, { ok: true, modules: effectiveModuleFor(person), backups: { modules: moduleBackup, allow: allowBackup, role: roleBackup } });
+        // 语言风格模块 → 角色技能注册表
+        for (const skill of roleDoc.skills) {
+          if (!Array.isArray(skill.audiences)) skill.audiences = [];
+          skill.audiences = skill.audiences.filter((audience) =>
+            audience && !(audience.person === name || (Array.isArray(audience.openids) && audience.openids.some((id) => openids.includes(id)))));
+        }
+        if (next.style.enabled) {
+          const skill = roleDoc.skills.find((item) => item.id === styleSkill);
+          if (skill) skill.audiences.push({ person: name, openids, groups, default: true });
+        }
+        // 生图模块 → 生图技能（imagePermission.skill，缺省 image-gen）的受众；
+        // 技能不存在就建一个纯权限技能（没有 SKILL.md，不注入提示词）。
+        const imageSkillId = imageSkillIdOf(roleDoc);
+        let imageSkill = roleDoc.skills.find((item) => item && String(item.id ?? '') === imageSkillId);
+        if (imageSkill && Array.isArray(imageSkill.audiences)) {
+          imageSkill.audiences = imageSkill.audiences.filter((audience) =>
+            audience && !(audience.person === name || (Array.isArray(audience.openids) && audience.openids.some((id) => openids.includes(id)))));
+        }
+        if (next.imageGen.enabled) {
+          if (!imageSkill) {
+            imageSkill = {
+              id: imageSkillId, name: '生图', category: '能力', kind: 'capability', enabled: true,
+              description: '允许让机器人画图的人。只认这个技能的受众，不注入提示词。', audiences: [],
+            };
+            roleDoc.skills.push(imageSkill);
+          }
+          if (!Array.isArray(imageSkill.audiences)) imageSkill.audiences = [];
+          imageSkill.audiences.push({ person: name, openids, groups, default: true });
+        }
+        // 语音模块 → 语音技能（voicePermission.skill，缺省 voice-gen）的受众；同样只建纯权限技能。
+        const voiceSkillId = voiceSkillIdOf(roleDoc);
+        let voiceSkill = roleDoc.skills.find((item) => item && String(item.id ?? '') === voiceSkillId);
+        if (next.voiceGen.enabled) {
+          if (!voiceSkill) {
+            voiceSkill = {
+              id: voiceSkillId, name: '语音', category: '能力', kind: 'capability', enabled: true,
+              description: '允许让机器人发语音的人。只认这个技能的受众，不注入提示词。语音要烧本机算力。', audiences: [],
+            };
+            roleDoc.skills.push(voiceSkill);
+          }
+          if (!Array.isArray(voiceSkill.audiences)) voiceSkill.audiences = [];
+          voiceSkill.audiences.push({ person: name, openids, groups, default: true });
+        }
+        return docs;
+      }));
+      return send(200, { ok: true, modules: effectiveModuleFor(person, saved) });
     }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
     return;
   }
@@ -1266,34 +2112,31 @@ const server = createServer((req, res) => {
     readBody().then((body) => {
       const wanted = Array.isArray(body.people) ? body.people : [];
       const store = readPeopleStore();
-      const previous = existsSync(MEDIA_ALLOW) ? JSON.parse(readFileSync(MEDIA_ALLOW, 'utf8')) : { people: [] };
-      const prevMap = new Map((Array.isArray(previous.people) ? previous.people : []).map((person) => [String(person.name ?? ''), person]));
-      const people = [];
-      const seen = new Set();
-      for (const item of wanted) {
-        const name = String(item?.name ?? '').trim();
-        if (name === '' || seen.has(name)) continue;
-        seen.add(name);
-        const person = (Array.isArray(store.people) ? store.people : []).find((p) => p.name === name);
-        const prev = prevMap.get(name);
-        const categories = Array.isArray(item.categories)
-          ? [...new Set(item.categories.map((category) => String(category ?? '').trim()).filter(Boolean))].slice(0, 5)
-          : [];
-        people.push({
-          name,
-          openids: Array.isArray(person?.openids) ? person.openids : (Array.isArray(prev?.openids) ? prev.openids : []),
-          groups: Array.isArray(person?.groups) ? person.groups : (Array.isArray(prev?.groups) ? prev.groups : []),
-          categories,
-          all: false,
-        });
-      }
-      const data = {
-        _说明: '收图/放图名单：名单里的人发图时按 categories 做视觉分类，只收对应类别；梗图/表情包排除。groups 为空表示所有群。',
-        people,
-      };
-      const backup = writeWithBackup(MEDIA_ALLOW, `${JSON.stringify(data, null, 2)}\n`);
+      const { people } = withProfileDocuments(db => db.update('media-allow', previous => {
+        const prevMap = new Map((Array.isArray(previous.people) ? previous.people : []).map((person) => [String(person.name ?? ''), person]));
+        const people = [];
+        const seen = new Set();
+        for (const item of wanted) {
+          const name = String(item?.name ?? '').trim();
+          if (name === '' || seen.has(name)) continue;
+          seen.add(name);
+          const person = (Array.isArray(store.people) ? store.people : []).find((p) => p.name === name);
+          const prev = prevMap.get(name);
+          const categories = Array.isArray(item.categories)
+            ? [...new Set(item.categories.map((category) => String(category ?? '').trim()).filter(Boolean))].slice(0, 5)
+            : [];
+          people.push({
+            name,
+            openids: Array.isArray(person?.openids) ? person.openids : (Array.isArray(prev?.openids) ? prev.openids : []),
+            groups: Array.isArray(person?.groups) ? person.groups : (Array.isArray(prev?.groups) ? prev.groups : []),
+            categories,
+            all: false,
+          });
+        }
+        return { ...previous, people };
+      }));
       console.log(`[panel] ${new Date().toISOString()} 保存收图名单 ${people.length} 人`);
-      return send(200, { ok: true, people, backup });
+      return send(200, { ok: true, people });
     }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
     return;
   }
@@ -1306,7 +2149,7 @@ const server = createServer((req, res) => {
     const tag = url.searchParams.get('tag') ?? '';
     const favorites = url.searchParams.get('favorites') === '1';
     const limit = Number(url.searchParams.get('limit') ?? 40) || 40;
-    botControl('/media/search', { query, person, group, tag, favorites, limit })
+    botControl('/media/search', { query, person, group, tag, favorites, limit, excludeStickers: true })
       .then((result) => send(200, { ok: true, items: result.items ?? [] }))
       .catch((err) => send(502, { ok: false, error: String(err?.message ?? err) }));
     return;
@@ -1425,9 +2268,9 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`机器人控制台已启动: http://127.0.0.1:${PORT}`);
+  console.log(`机器人控制台已启动: http://127.0.0.1:${server.address().port}`);
   console.log(`配置文件: ${PATCH}`);
-  console.log(`人格文件: ${PERSONAS}`);
+  console.log(`文档数据库: ${PERSONAS}`);
   console.log(`档案文件: ${PEOPLE}`);
 });
 

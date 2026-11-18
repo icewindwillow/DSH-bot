@@ -1,0 +1,36 @@
+<section class="pane people-pane" id="panePeople" hidden>
+    <div class="people-shell" id="peopleShell">
+      <div class="people-toolbar page-heading section-title-block">
+        <div><div class="page-eyebrow">MEMBER PROFILES</div><h1>群成员档案</h1><p>查看小易如何识别成员、与他们互动，以及记住了什么。</p></div>
+        <div class="people-toolbar-actions">
+          <button id="btnReloadPeople">重新读取</button>
+          <button id="btnGroupManage" disabled>群管理 / 会话</button>
+          <button class="primary" id="btnSavePeople" disabled>保存档案</button>
+        </div>
+      </div>
+      <div class="msg people-status" id="peopleStatus" role="status"></div>
+      <div class="people-layout">
+        <aside class="members card" aria-label="成员目录">
+          <div class="members-head">
+            <label for="peopleGroupFilter">查看范围</label>
+            <select id="peopleGroupFilter"><option>全部档案</option></select>
+            <input type="text" id="peopleSearch" aria-label="搜索成员" placeholder="名字 / 称呼 / 昵称 / OpenID" />
+            <div class="members-actions"><button class="small" id="btnAddPerson" disabled>＋ 新增成员</button><button class="small ghost" id="btnDupPerson" disabled>复制当前档案</button></div>
+          </div>
+          <div class="members-caption"><strong>成员目录</strong><span class="muted" id="peopleCount"></span></div>
+          <ul class="mlist" id="peopleList"></ul>
+        </aside>
+        <div class="member-form" id="memberForm" aria-label="当前成员档案"><div class="empty">正在读取群成员档案…</div></div>
+      </div>
+    </div>
+    <dialog class="people-dialog wide group-manage" id="groupManage" aria-labelledby="groupManageTitle">
+      <h2 id="groupManageTitle">群管理 / 会话</h2>
+      <div class="row">
+        <input type="text" id="newGroupId" aria-label="群 OpenID" placeholder="群 OpenID" />
+        <input type="text" id="newGroupName" aria-label="群名称" placeholder="输入群名称" />
+        <button class="small" id="btnAddGroup">＋ 加群</button>
+      </div>
+      <div id="groupManageList"></div>
+      <div class="people-dialog-actions"><button id="btnCloseGroupManage">关闭</button></div>
+    </dialog>
+  </section>

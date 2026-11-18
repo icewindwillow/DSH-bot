@@ -1,0 +1,40 @@
+<section class="pane" id="panePersona" hidden>
+    <div class="persona-shell">
+      <div class="persona-top section-title-block">
+        <div><div class="persona-eyebrow">PERSONA STUDIO</div><h1>人格设定</h1><p>先装备人格，再决定每个群组使用哪一套人格。</p></div>
+        <div class="persona-actions"><button id="btnPersonaImport">导入人格</button><button class="primary" id="btnSavePersonaTop">保存设置</button></div>
+      </div>
+      <div class="persona-tabs"><button class="persona-tab active" data-persona-view="equip">人格装备</button><button class="persona-tab" data-persona-view="groups">群组配置</button></div>
+      <div class="persona-view active" id="personaViewEquip">
+        <div class="persona-layout">
+          <aside class="persona-card"><div class="persona-card-head"><div><strong>人格库</strong><div class="sub">已装备的人格与群组实例</div></div><span class="persona-chip" id="personaCount">0 个</span></div><ul class="persona-list" id="plist"></ul><button class="small" id="btnNewPersona" style="width:100%;margin-top:10px">＋ 新建人格</button></aside>
+          <div class="persona-editor">
+            <div id="personaAlerts"></div>
+            <section class="persona-card">
+              <div class="persona-summary"><div><div class="persona-title-line"><h2 id="personaTitle">当前人格</h2><button class="small persona-title-edit" id="btnRenamePersona" title="修改人格名称" aria-label="修改人格名称">✎</button></div><p class="hint" id="personaHint"></p></div><span class="persona-chip ok">● 已装备</span></div>
+              <div class="persona-chips"><span class="persona-chip">人格模板</span><span class="persona-chip" id="personaModuleChip">模块</span><span class="persona-chip">保存后热生效</span></div>
+              <select id="selArchetype" hidden aria-hidden="true" tabindex="-1"></select>
+              <div class="persona-subsection"><div class="persona-subhead"><div><h3>模块顺序</h3><span class="hint">按顺序拼接，运行时自动追加「群聊行为守则」</span></div><div class="row"><button class="small" id="btnOwn" hidden>启用独立人格</button><button class="small" id="btnInherit" hidden>恢复继承默认</button></div></div><ol class="modules" id="moduleList"></ol><div class="module-actions"><select id="selAddModule" class="module-action-select"></select><button class="small" id="btnAddModule">＋ 追加模块</button><select id="selCopyTo" class="module-action-select module-copy-group"></select><button class="small" id="btnCopy">复制到…</button></div></div>
+            </section>
+            <section class="persona-lower"><div class="persona-card"><div class="persona-card-head"><div><strong>模块库</strong><div class="sub">所有人格共用的模块正文</div></div><span class="persona-chip" id="moduleCount">0 个模块</span></div><div class="row" style="margin:12px 0 9px"><button class="small" id="btnNewModule">＋ 新建模块</button></div><div class="mod-editor" id="moduleEditor"></div></div><section class="persona-card persona-preview"><div class="persona-card-head"><div><strong>最终人设预览</strong><div class="sub" id="previewHint">模块 → 人格类型 → 群聊行为守则</div></div><span class="persona-chip">实时预览</span></div><pre class="preview" id="preview"></pre><div class="preview-foot"><span id="previewCount">当前预览</span><button class="ghost small" id="btnFullPreview">查看完整预览 →</button></div></section></section>
+            <div class="persona-savebar"><button class="primary" id="btnSavePersona">保存人格</button><span class="msg" id="personaMsg"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="persona-view" id="personaViewGroups"><div class="group-config"><section class="persona-card"><div class="persona-card-head"><div><h2>群组配置</h2><p class="intro">这里选择「群组」，为每个群组指定已装备的人格；人格内容请在「人格装备」页维护。</p></div><span class="persona-chip ok">● 群组分配</span></div><div class="group-config-grid"><div class="group-config-item"><label>批量选择人格</label><select id="personaBatchProfile"><option value="">选择人格模板…</option></select></div><div class="group-config-item"><label>未配置群组的继承策略</label><select id="personaFallback"><option value="default">未配置群组使用默认人格</option><option value="*">未配置群组使用通配人格</option></select></div></div><div id="personaGroupList"></div></section><div class="persona-savebar"><button class="primary" id="btnSaveGroupConfig">保存群组配置</button><span class="msg" id="groupConfigMsg"></span></div></div></div>
+    </div>
+    <div class="persona-name-modal" id="personaNameModal" role="dialog" aria-modal="true" aria-labelledby="personaNameModalTitle">
+      <div class="persona-name-dialog">
+        <h2 id="personaNameModalTitle">修改人格名称</h2>
+        <p>这个名称只用于控制台展示，不会改变人格内容和后端标识。</p>
+        <input id="personaNameInput" type="text" maxlength="40" placeholder="请输入人格名称">
+        <div class="dialog-actions"><button type="button" id="btnPersonaNameCancel">取消</button><button type="button" class="primary" id="btnPersonaNameConfirm">确定</button></div>
+      </div>
+    </div>
+    <div class="persona-preview-modal" id="personaPreviewModal" role="dialog" aria-modal="true" aria-labelledby="personaPreviewModalTitle">
+      <div class="persona-preview-dialog">
+        <div class="dialog-head"><div><h2 id="personaPreviewModalTitle">最终人设预览</h2><p id="fullPreviewHint">当前人格组合后的完整内容</p></div><button class="small" id="btnFullPreviewClose">关闭</button></div>
+        <pre id="fullPreview"></pre>
+      </div>
+    </div>
+  </section>

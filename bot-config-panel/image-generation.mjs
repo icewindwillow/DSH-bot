@@ -1,10 +1,9 @@
 /** Strict, local-only image settings. No credentials, network requests or import-time I/O. */
 import {
   constants, lstatSync, mkdirSync, openSync, closeSync, fstatSync, readSync,
-  writeFileSync, fchmodSync, fsyncSync, renameSync, unlinkSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { readQqbotProfileDocument, withQqbotProfileDocuments } from '../plugins/qqbot-core/profile-documents.js';
 
 export const IMAGE_GENERATION_DEFAULTS = Object.freeze({
   enabled: false,
@@ -119,7 +118,7 @@ function checkFile(stat) {
   if (stat && stat.size > MAX_FILE_BYTES)
     fail('生图配置超过 16 KiB 上限', 'ERR_IMAGE_GENERATION_TOO_LARGE', 413);
 }
-export function readImageGenerationSettings(profileDir) {
+function readLegacyImageGenerationSettings(profileDir) {
   let fd;
   try {
     const { dir, exists } = directory(profileDir);
@@ -154,34 +153,21 @@ export function readImageGenerationSettings(profileDir) {
   } catch (error) { throw safeError(error, 'read'); }
   finally { if (fd !== undefined) closeSync(fd); }
 }
+export function readImageGenerationSettings(profileDir) {
+  try {
+    directory(profileDir);
+    return validateImageGenerationSettings(readQqbotProfileDocument(profileDir, 'image-generation', {
+      empty: () => ({ ...IMAGE_GENERATION_DEFAULTS }),
+      readLegacy: () => readLegacyImageGenerationSettings(profileDir),
+    }));
+  } catch (error) { throw safeError(error, 'read'); }
+}
+
 export function writeImageGenerationSettings(profileDir, value) {
-  let fd;
-  let temp;
-  let created = false;
   try {
     const settings = validateImageGenerationSettings(value);
     const { dir } = directory(profileDir, true);
-    const path = join(dir, FILE_NAME);
-    checkFile(safeStat(path));
-    temp = join(dir, `.qqbot-image-generation.${randomBytes(16).toString('hex')}.tmp`);
-    fd = openSync(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
-    created = true;
-    fchmodSync(fd, 0o600);
-    writeFileSync(fd, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-    fsyncSync(fd);
-    closeSync(fd); fd = undefined;
-    directory(profileDir);
-    checkFile(safeStat(path));
-    renameSync(temp, path);
-    created = false;
-    return settings;
+    checkFile(safeStat(join(dir, FILE_NAME)));
+    return withQqbotProfileDocuments(dir, db => db.update('image-generation', () => settings));
   } catch (error) { throw safeError(error, 'write'); }
-  finally {
-    if (fd !== undefined) closeSync(fd);
-    // Only the exact exclusive temporary path created in the validated directory is removed.
-    if (created && temp && dirname(temp) === resolve(profileDir)) {
-      directory(profileDir);
-      unlinkSync(temp);
-    }
-  }
 }

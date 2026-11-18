@@ -1,0 +1,23 @@
+<section class="pane gallery-pane" id="paneGallery" hidden>
+    <div class="section-title-block"><div><div class="page-eyebrow">MEDIA LIBRARY</div><h1>图库</h1><p>浏览、筛选和管理群聊中保存的图片。</p></div></div>
+    <div class="gallery-toolbar">
+      <input type="text" id="galleryQuery" placeholder="搜关键词：威士忌、旅行、猫…" />
+      <select id="galleryGroup"><option value="">全部群</option></select>
+      <input type="text" id="galleryPerson" list="galleryPeople" placeholder="输入分享人名字" />
+      <datalist id="galleryPeople"></datalist>
+      <label class="muted" style="display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:13px">
+        <input type="checkbox" id="galleryFavorites" style="width:auto" /> 只看收藏
+      </label>
+      <button class="small primary" id="gallerySearch">搜索</button>
+      <span class="muted" id="galleryCount"></span>
+      <span style="flex:1"></span>
+      <button class="small ghost" id="gallerySelectAll">全选</button>
+      <button class="small danger" id="galleryDelete" disabled>删除选中</button>
+    </div>
+    <div class="gallery-note">
+      <span id="galleryAllowNote"></span>
+      <span style="flex:1"></span>
+      <button class="small ghost" id="galleryAllowEdit">编辑名单</button>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
+  </section>

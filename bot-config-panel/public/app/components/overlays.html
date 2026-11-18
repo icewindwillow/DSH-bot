@@ -1,0 +1,53 @@
+<!-- Shared overlays and dialogs. IDs are part of the existing runtime contract. -->
+<div class="toast" id="toast"></div>
+
+
+<div class="allow-modal" id="allowModal" hidden>
+  <div class="allow-box">
+    <div class="allow-head">
+      <strong>收图 / 放图名单</strong>
+      <input type="text" id="allowSearch" placeholder="搜人…" />
+      <button class="small ghost" id="allowClose">关闭</button>
+    </div>
+    <div class="allow-list" id="allowList"></div>
+    <div class="allow-foot">
+      <span class="muted">勾选的人发图会按分类归档；梗图 / 表情包排除。</span>
+      <span style="flex:1"></span>
+      <button class="small primary" id="allowSave">保存</button>
+      <button class="small ghost" id="allowCancel">取消</button>
+    </div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox">
+  <div class="box">
+    <img id="lightboxImg" alt="" />
+    <div class="lbmeta">
+      <strong id="lightboxCap"></strong>
+      <span id="lightboxMeta"></span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="small" id="lightboxCopy">复制路径</button>
+      <button class="small danger" id="lightboxDelete">删除这张</button>
+      <button class="small ghost" id="lightboxClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<dialog id="homeNameDialog" aria-labelledby="homeNameTitle">
+  <form id="homeNameForm">
+    <div class="sc-modal-head"><h2 id="homeNameTitle">首页显示名称</h2></div>
+    <p>仅用于首页顶栏和问候语，不更改机器人或其他设置。</p>
+    <div class="field">
+      <label for="homeNameInput">显示名称</label>
+      <input id="homeNameInput" type="text" maxlength="24" required autofocus autocomplete="off" />
+    </div>
+    <div class="sc-actions">
+      <button type="button" class="small" id="homeNameDefault">使用默认</button>
+      <button type="button" class="small" id="homeNameCancel">取消</button>
+      <button type="submit" class="small primary">保存</button>
+    </div>
+  </form>
+</dialog>
+<div class="sc-modal settings-utility-modal" id="settingsUtilityModal"><div class="sc-modal-box"><div class="sc-modal-head"><h2 id="settingsUtilityTitle">设置</h2><button class="sc-modal-close" id="settingsUtilityClose">×</button></div><div id="settingsUtilityBody"><div id="settingsThemePanel" class="settings-utility-panel" hidden><p class="hint">选择控制台色调，设置会保存在本机。</p><div class="theme-options" role="group" aria-label="控制台配色选项"><button type="button" class="theme-option" data-theme-choice="blue"><i class="theme-swatch swatch-blue"></i><span>银灰</span></button><button type="button" class="theme-option" data-theme-choice="purple"><i class="theme-swatch swatch-purple"></i><span>紫罗兰</span></button><button type="button" class="theme-option" data-theme-choice="warm"><i class="theme-swatch swatch-warm"></i><span>暖杏</span></button><button type="button" class="theme-option" data-theme-choice="whale"><i class="theme-swatch swatch-whale"></i><span>鲸鱼蓝</span></button></div></div><div id="settingsOwnersPanel" class="settings-utility-panel" hidden></div></div></div></div>
+<div class="sc-modal" id="settingsDetailModal"><div class="sc-modal-box"><div class="sc-modal-head"><h2 id="settingsDetailTitle">详细设置</h2><button class="sc-modal-close" id="settingsDetailClose">×</button></div><div id="settingsDetailBody"></div></div></div>
+<div class="sc-modal" id="ttsProviderModal"><div class="sc-modal-box tts-provider-modal-box"><div class="sc-modal-head"><h2 id="ttsProviderTitle">语音服务配置</h2><button class="sc-modal-close" id="ttsProviderClose">×</button></div><div id="ttsProviderBody"></div></div></div>
+<div class="sc-modal" id="imageConfigModal"><div class="sc-modal-box image-config-modal-box"><div class="sc-modal-head"><h2>生图配置</h2><button class="sc-modal-close" id="imageConfigClose">×</button></div><div id="imageConfigBody"></div></div></div>

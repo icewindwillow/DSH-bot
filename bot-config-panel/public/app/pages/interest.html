@@ -1,0 +1,69 @@
+<section class="pane" id="paneInterest" hidden>
+    <div class="section-title-block"><div><div class="page-eyebrow">GROUP INTEREST</div><h1>群兴趣</h1><p>查看群里正在形成的共同话题与偏好。</p></div></div>
+    <div class="card">
+      <h2>群兴趣画像</h2>
+      <p class="hint">按群观察「大家在聊什么」，加上群里的人跟小易聊出来的偏好；观察到的具体话题才会进入搜索池。搜索默认只手动跑，结果先落库；带话和主动分享默认关。保存后机器人热读生效，不需要重启。</p>
+      <div class="grid">
+        <div class="field">
+          <label>总开关</label>
+          <label class="muted" style="font-size:12px"><input type="checkbox" id="intEnabled"> 启用兴趣观察</label>
+        </div>
+        <div class="field">
+          <label for="intSearchMode">搜索模式</label>
+          <select id="intSearchMode">
+            <option value="off">off：完全不搜</option>
+            <option value="manual">manual：只手动触发（推荐）</option>
+            <option value="auto">auto：按群活跃度自动搜</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="intShareMode">主动分享</label>
+          <select id="intShareMode">
+            <option value="off">off：不主动发（默认）</option>
+            <option value="auto">auto：只给逐群开启的群发</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="intActiveMin">活跃度门槛（0–1）</label>
+          <input type="text" id="intActiveMin" placeholder="0.15">
+        </div>
+        <div class="field">
+          <label for="intSearchPerRun">单次最多搜索次数</label>
+          <input type="text" id="intSearchPerRun" placeholder="6">
+        </div>
+        <div class="field">
+          <label for="intSearchMinScore">收录最低分（0–1）</label>
+          <input type="text" id="intSearchMinScore" placeholder="0.45">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="grow"></span>
+        <button class="small primary" id="btnIntSave">保存总配置</button>
+        <span class="msg" id="intMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>群 <span class="muted" id="intSummary" style="font-size:12px"></span></h2>
+      <p class="hint">活跃度来自最近群消息：越活跃的群观察越勤、搜索额度回充越快。没发言的群不会被一直搜。</p>
+      <div style="overflow:auto">
+        <table class="matrix">
+          <thead>
+            <tr><th>群</th><th>活跃度</th><th>24h 消息</th><th>话题</th><th>发现</th><th>上次观察</th><th>搜索</th><th>分享</th><th></th></tr>
+          </thead>
+          <tbody id="intGroups"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="interest-detail-heading">话题与发现
+        <label class="interest-group-picker-label" for="intGroupPicker">群</label>
+        <select id="intGroupPicker" class="interest-group-picker" aria-label="选择群"></select>
+      </h2>
+      <p class="hint" id="intDetailMsg"></p>
+      <div id="intTopics"></div>
+      <div id="intFindings" style="margin-top:10px"></div>
+      <div id="intRuns" class="hint" style="margin-top:10px"></div>
+    </div>
+  </section>

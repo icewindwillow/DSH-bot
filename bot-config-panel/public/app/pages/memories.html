@@ -1,0 +1,66 @@
+<section class="pane" id="paneMemories" hidden>
+    <div id="memBrowse">
+      <div class="mem-head page-heading section-title-block">
+        <div><div class="page-eyebrow">PRIVATE MEMORY</div><div class="mem-title"><h1>私人记忆</h1><button type="button" id="btnMemHelp" class="ghost mem-help" aria-label="私人记忆说明">?</button></div>
+          <p class="muted">管理小易的手动记忆和各群自动形成的记忆。</p></div>
+        <button id="btnMemAdd" class="primary" type="button">＋ 新增记忆</button>
+      </div>
+      <div class="mem-tabs" role="group" aria-label="记忆来源">
+        <button type="button" data-mem-mode="library" aria-pressed="true">手动记忆库</button>
+        <button type="button" data-mem-mode="auto" aria-pressed="false">群内自动记忆</button>
+      </div>
+      <div class="mem-filter-panel">
+        <p class="muted" id="memContext"></p>
+        <div class="mem-filter-row">
+          <form id="memSearch" class="mem-toolbar">
+            <label id="memGroupField" hidden>所属群 <select id="memAutoGid"></select></label>
+            <input type="text" id="memQuery" aria-label="搜索记忆" placeholder="搜索主题、正文或标签">
+            <button type="submit">搜索</button>
+          </form>
+          <div class="mem-auto-filters" id="memAutoFilters" hidden>
+            <label>人物 <select id="memAutoPerson"><option value="">所有人物</option></select></label>
+            <label class="mem-check"><input type="checkbox" id="memAutoArchive"> <span>显示已归档</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="mem-layout">
+        <section class="card mem-index" aria-labelledby="memListHeading">
+          <div class="mem-index-head"><h3 id="memListHeading">记忆列表</h3><span id="memCount" class="muted" role="status"></span></div>
+          <p id="memMsg" class="muted mem-list-msg" role="status" hidden></p>
+          <div id="memList"></div>
+        </section>
+        <section class="card mem-detail" id="memDetail" aria-label="当前记忆" hidden></section>
+      </div>
+    </div>
+    <div id="memEditor" hidden>
+      <button id="btnMemBack" type="button" class="ghost">← 返回列表</button>
+      <h2 id="memEditorTitle">新增记忆</h2>
+      <form id="memEditorForm" class="card mem-editor-form">
+        <div id="memTopicField" class="field"><label for="memTopic">主题 <span class="muted">（可选，留空时取正文开头）</span></label><input type="text" id="memTopic" maxlength="40"></div>
+        <p id="memEditGroup" class="muted" hidden></p>
+        <div class="field"><label for="memText">记忆正文</label><textarea id="memText" rows="5" maxlength="4000" required></textarea></div>
+        <div class="field"><label for="memTags">标签 <span class="muted">（用空格分隔）</span></label><input type="text" id="memTags" maxlength="300"></div>
+        <label class="mem-check"><input type="checkbox" id="memPinned"> 置顶这条记忆</label>
+        <p id="memNewHint" class="muted">新增的记忆默认未启用，保存后可在详情里设置启用范围。</p>
+        <p id="memEditMsg" role="status"></p>
+        <div class="mem-actions"><button type="button" id="btnMemCancel" class="ghost">取消</button><button type="submit" id="btnMemSave" class="primary">保存记忆</button></div>
+      </form>
+    </div>
+    <dialog id="memScopeDialog" class="mem-dialog" aria-labelledby="memScopeTitle" aria-describedby="memScopeHint">
+      <div class="mem-dialog-head"><h2 id="memScopeTitle">编辑人格范围</h2><button type="button" id="btnMemScopeClose" class="ghost" aria-label="关闭启用范围弹窗">×</button></div>
+      <p id="memScopeHint" class="muted">当前人格使用选中的模块时，这条记忆才会参与召回。</p>
+      <div class="mem-current"><span class="muted">当前记忆</span><strong id="memScopeTopic"></strong></div>
+      <form id="memScopeForm">
+        <fieldset class="mem-module-list"><legend>人格组合</legend><div id="memPersonaOptions"></div></fieldset>
+        <p id="memScopePreview" class="muted" role="status"></p>
+        <p id="memScopeError" role="alert"></p>
+        <div class="mem-actions"><button type="button" id="btnMemScopeCancel" class="ghost">取消</button><button type="submit" id="btnMemScopeSave" class="primary" disabled>保存启用范围</button></div>
+      </form>
+    </dialog>
+    <dialog id="memHelpDialog" class="mem-dialog" aria-labelledby="memHelpTitle">
+      <div class="mem-dialog-head"><h2 id="memHelpTitle">关于私人记忆</h2></div>
+      <p>手动记忆只保存一份，可供多个选中的人格组合召回。没有选中任何模块时，记忆仍留在库里，但不参与召回。</p>
+      <p>旧版按群启用的记忆保留原范围，直到你打开「编辑人格范围」并保存。群内自动记忆仍按所属群单独管理。</p>
+      <form method="dialog" class="mem-actions"><button type="submit" autofocus>关闭</button></form>
+    </dialog>
+  </section>

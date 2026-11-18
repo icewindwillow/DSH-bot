@@ -1,0 +1,4 @@
+# Install with: dsh plugin --profile <profile> add ./plugins/qqbot-core
+- insert:
+    - id: qqbot-core
+      name: 'qqbot-core'

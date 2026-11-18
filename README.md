@@ -22,14 +22,16 @@
 
 ## 控制台实拍
 
-启动 `npm run panel` 后，在本机浏览器里选模型、调推理强度、填接入凭据，以及为各群组装人格和调整唤醒指数。还有群成员档案、图库、事件追踪和指令权限，不用来回打开一堆配置文件。
+启动 `npm run panel` 后，会进入新版「小易控制台」工作台：先看消息活动和系统健康度，再从系统设置管理模型、凭据、QQ 连接、语音与生图；人格、群成员、私人记忆、图库、事件追踪和群兴趣也都在同一套界面里。
 
-![公开版控制台：模型选择与推理强度](docs/assets/panel-model.jpg)
+![新版控制台总览：消息活动、最近动态与系统健康度](docs/assets/panel-home.png)
 
 <details>
 <summary>再看看人格编辑与唤醒配置</summary>
 
-![公开版控制台：分群人格、模块库与提示词预览](docs/assets/panel-persona.jpg)
+![新版控制台：分群人格、模块库与提示词预览](docs/assets/panel-persona.png)
+
+![新版控制台：模型、密钥与连接模块](docs/assets/panel-settings.png)
 
 </details>
 
