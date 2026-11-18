@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "maxChars": 120,
+  "cooldownSeconds": 60,
+  "providers": [
+    {
+      "id": "index-tts-local",
+      "enabled": true,
+      "followMood": true,
+      "url": "http://127.0.0.1:7793",
+      "voice": "u2",
+      "emotion": "",
+      "emoAlpha": 0.5,
+      "durationFactor": 0.95,
+      "maxChars": 120,
+      "timeoutSeconds": 150
+    },
+    {
+      "id": "openai-compatible",
+      "enabled": true,
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "model": "FunAudioLLM/CosyVoice2-0.5B",
+      "voice": "FunAudioLLM/CosyVoice2-0.5B:diana",
+      "credential": "SILICONFLOW_API_KEY",
+      "responseFormat": "mp3",
+      "speed": 1.1,
+      "timeoutSeconds": 20
+    },
+    {
+      "id": "edge",
+      "enabled": true,
+      "voice": "zh-CN-XiaoyiNeural"
+    }
+  ]
+}

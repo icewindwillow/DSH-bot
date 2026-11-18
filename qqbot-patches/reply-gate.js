@@ -5,7 +5,21 @@
             const msg = ctx.message;
             if (msg.kind !== 'group' || !msg.groupOpenid)
                 return false;
-            return decideGroupImplicit(msg.groupOpenid, msg.content);
+            try {
+                // 被真 @ 一定应：私域全量消息收不到 AT 事件，只能靠 mentions / 正文里的 @ 判断，
+                // 否则「必须 @」的群里 @ 她反而会被门控吞掉。
+                if (globalThis.__qqbotMention?.addressed?.(msg))
+                    return true;
+                // 主人 / 管理员说话就算叫到：必须 @ 的群、唤醒指数 0 的群也直接放行
+                if (senderBypass({ id: msg.senderId, name: msg.senderName }))
+                    return true;
+                return decideGroupImplicit(msg.groupOpenid, msg.content, msg);
+            }
+            catch (err) {
+                // 门控本身不能把整条消息搞挂：异常时放行，交给回话门控和模型判断
+                console.log(`[im-qqbot] 门控判定异常: ${err && err.stack ? err.stack : err}`);
+                return true;
+            }
         },
     }));
     // 象信回话门控：过完 @/窗口 之后，再问一次「这条到底要不要回」，
@@ -57,10 +71,39 @@
         // 斜杠命令不参与回话判断
         if (content.startsWith('/'))
             return next();
-        // 刚回过话（3 分钟内）：当作对话延续，直接放行，不再花象信的钱
+        // 刚回过话（3 分钟内）：默认当作对话延续放行，但先看是不是群友之间在对话。
+        // 典型：云影刚跟机器人聊完，DR 隔 20 秒约云影打副本，机器人不该抢着答。
+        // 判断很轻：最近一条「不是他本人、也不是小易」的发言在 90 秒内，且这句没叫小易 → 是接那个人的话。
         const lastBot = globalThis.__qqbotLastBotReply?.get?.(msg.groupOpenid) ?? 0;
-        if (Date.now() - lastBot < 3 * 60 * 1000)
+        if (Date.now() - lastBot < 3 * 60 * 1000) {
+            const isShare = (Array.isArray(msg.attachments) && msg.attachments.length > 0)
+                || /\[图片\]|\[视频\]|\[文件\]/.test(content);
+            let words = [];
+            try {
+                const fs1 = process.getBuiltinModule?.('node:fs');
+                const dir1 = process.env.QQBOT_PROFILE_DIR ?? `${process.env.HOME ?? ''}/.dsh/profiles/qqbot`;
+                const cfg1 = JSON.parse(fs1.readFileSync(`${dir1}/qqbot-groups.json`, 'utf8'));
+                words = Array.isArray(cfg1.wakeWords) ? cfg1.wakeWords.filter((w) => typeof w === 'string' && w !== '') : [];
+            }
+            catch {
+                words = [];
+            }
+            const calledMe = words.some((w) => content.includes(w));
+            if (!isShare && !calledMe) {
+                const recent1 = globalThis.__qqbotRecentMessages?.get?.(msg.groupOpenid) ?? [];
+                const isBotName = (name) => words.some((w) => String(name ?? '').includes(w));
+                const lastOther = [...recent1].reverse().find((m) => m
+                    && String(m.id ?? '') !== String(msg.senderId ?? '')
+                    && !isBotName(m.name));
+                if (lastOther && Date.now() - Number(lastOther.at ?? 0) < 90 * 1000) {
+                    logger.info?.(`[im-qqbot] 对聊门控拦下: ${content.slice(0, 24)} (在接 ${lastOther.name ?? '群友'} 的话，${Math.round((Date.now() - Number(lastOther.at ?? 0)) / 1000)}s 前)`);
+                    return;
+                }
+                if (lastOther)
+                    logger.info?.(`[im-qqbot] 对聊门控放行: 上一条群友发言在 ${Math.round((Date.now() - Number(lastOther.at ?? 0)) / 1000)}s 前，间隔太久了`);
+            }
             return next();
+        }
         // 叫了名字（唤醒词）：一定放行。哪怕只发了「小易」两个字，
         // 象信会判成「没有实质内容」而拦掉，但这是明确在叫她。
         try {

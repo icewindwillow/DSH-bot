@@ -34,6 +34,90 @@ function createModelAwareFetch(deps) {
         url, backend: 'openai-native', accessed: false, isFullText: false,
         content: `OpenAI 原生联网未取得该指定页面的可核实正文：${reason}。这不等于原网页不存在；不要把搜索摘要或其它网页当成该原文。可换来源，或请用户贴正文/截图。`,
     });
+    // DeepSeek Fetch 对一部分站点会 504/超时，而这些站点从机器人本机往往直接可读。
+    // 直连兜底不经过任何付费 API，只在 DeepSeek 明确失败（5xx/超时/抓不到）时启用；
+    // 401/402/配置错误不兜底，避免把额度问题伪装成「页面能读」。
+    const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    const isPublicAddress = (address) => {
+        if (typeof address !== 'string' || address === '') return false;
+        if (address.includes(':')) {
+            const a = address.toLowerCase();
+            if (/^::ffff:(\d+\.\d+\.\d+\.\d+)$/.test(a)) return isPublicAddress(a.slice(7));
+            return !(a === '::1' || a === '::' || a.startsWith('fe80:') || a.startsWith('fc') || a.startsWith('fd'));
+        }
+        const parts = address.split('.').map(Number);
+        if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+        const [a, b] = parts;
+        if (a === 0 || a === 10 || a === 127) return false;
+        if (a === 169 && b === 254) return false;
+        if (a === 172 && b >= 16 && b <= 31) return false;
+        if (a === 192 && b === 168) return false;
+        if (a === 100 && b >= 64 && b <= 127) return false;
+        return true;
+    };
+    const ensurePublicHost = async (hostname) => {
+        const dns = globalThis.process?.getBuiltinModule?.('node:dns/promises');
+        if (!dns) throw fail('本机直连读取不可用：缺少 DNS 解析', 'WEB_PROVIDER_CONFIGURED_UNAVAILABLE');
+        let addresses = [];
+        try { addresses = await dns.lookup(hostname, { all: true }); }
+        catch { throw fail('目标域名解析失败，本机直连读取放弃', 'WEB_PROVIDER_ERROR'); }
+        if (!Array.isArray(addresses) || addresses.length === 0 || !addresses.every((entry) => isPublicAddress(entry.address)))
+            throw fail('目标域名解析到非公网地址，拒绝从本机直连读取', 'WEB_URL_BLOCKED');
+    };
+    const decodeEntities = (text) => text
+        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"').replace(/&apos;/gi, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+    const htmlToText = (html) => decodeEntities(html
+        .replace(/<(script|style|noscript|template|svg)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|div|li|h[1-6]|tr|section|article|header|footer|blockquote)>/gi, '\n')
+        .replace(/<[^>]+>/g, ' '))
+        .replace(/\r/g, ' ').replace(/[ \t\f\v]+/g, ' ').replace(/\n[ ]*\n[ ]*\n+/g, '\n\n').trim();
+    const readDirect = async (url, signal) => {
+        let current = url;
+        for (let hop = 0; hop <= 3; hop++) {
+            const target = new URL(current);
+            await ensurePublicHost(target.hostname);
+            const timeout = AbortSignal.timeout(20000);
+            const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+            const response = await deps.fetch(current, {
+                redirect: 'manual', signal: combined,
+                headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+                    'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+            });
+            if (response.status >= 300 && response.status < 400) {
+                const location = response.headers.get('location');
+                await response.body?.cancel?.();
+                if (!location) throw fail('网页重定向缺少目标地址', 'WEB_PROVIDER_ERROR');
+                current = validateUrl(new URL(location, current).href);
+                continue;
+            }
+            const contentType = String(response.headers.get('content-type') ?? '').toLowerCase();
+            if (!/^text\/|xml|json|javascript/.test(contentType) && contentType !== '')
+                throw fail(`目标不是文本网页（${contentType.split(';')[0]}），本机直连不读取`, 'WEB_PROVIDER_ERROR');
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const body = buffer.subarray(0, 5_000_000);
+            const charset = /charset=([\w-]+)/i.exec(contentType)?.[1]
+                ?? /<meta[^>]+charset=["']?([\w-]+)/i.exec(body.toString('utf8', 0, 4096))?.[1] ?? 'utf-8';
+            let text;
+            try { text = new TextDecoder(charset.toLowerCase(), { fatal: false }).decode(body); }
+            catch { text = body.toString('utf8'); }
+            const content = /html|xml/.test(contentType) ? htmlToText(text) : text.trim();
+            return {
+                url, backend: 'direct-fetch', accessed: response.status >= 200 && response.status < 300,
+                statusCode: response.status, isFullText: false,
+                content: content ? content.slice(0, 20000) : `本机直连读取成功（HTTP ${response.status}），但没有提取到可读正文。`,
+            };
+        }
+        throw fail('网页重定向次数过多，本机直连读取放弃', 'WEB_PROVIDER_ERROR');
+    };
+    const directFallbackAllowed = (error) => {
+        if (error?.code === 'WEB_ABORTED' || error?.code === 'WEB_URL_BLOCKED') return false;
+        if (error?.code === 'WEB_PROVIDER_AUTH_ERROR' || error?.code === 'WEB_PROVIDER_CREDENTIAL_MISSING'
+            || error?.code === 'WEB_PROVIDER_CONFIGURED_UNAVAILABLE') return false;
+        return !/HTTP (401|402|403)\b/.test(String(error?.message ?? ''));
+    };
     const read = async (request, signal) => {
         checkAbort(signal);
         const url = validateUrl(request?.url);
@@ -41,9 +125,23 @@ function createModelAwareFetch(deps) {
         const backend = route.provider === 'openai' ? 'openai-native' : 'deepseek-fetch-api';
         deps.log?.(`[im-qqbot] 自动网页读取路由: ${route.provider ?? 'default'}/${route.model ?? 'default'} -> ${backend} host=${new URL(url).hostname}`);
         if (backend !== 'openai-native') {
-            const result = await ds(route).fetch({ url }, signal);
-            return { url: result.url, backend, accessed: result.statusCode >= 200 && result.statusCode < 300,
-                statusCode: result.statusCode, isFullText: false, content: result.body.content };
+            try {
+                const result = await ds(route).fetch({ url }, signal);
+                return { url: result.url, backend, accessed: result.statusCode >= 200 && result.statusCode < 300,
+                    statusCode: result.statusCode, isFullText: false, content: result.body.content };
+            }
+            catch (error) {
+                checkAbort(signal);
+                if (!directFallbackAllowed(error)) throw error;
+                deps.log?.(`[im-qqbot] DeepSeek 网页读取失败（${String(error?.message ?? error).replace(/\s+/g, ' ').slice(0, 160)}），改本机直连 host=${new URL(url).hostname}`);
+                try {
+                    return await readDirect(url, signal);
+                }
+                catch (directError) {
+                    checkAbort(signal);
+                    throw fail(`DeepSeek 网页读取失败（${String(error?.message ?? error).replace(/\s+/g, ' ').slice(0, 200)}）；本机直连也失败（${String(directError?.message ?? directError).replace(/\s+/g, ' ').slice(0, 160)}）`);
+                }
+            }
         }
         // 原生 open_page 仅 reasoning 模型提供（例如 GPT-4.1 只有搜索）。统一用具备该能力的
         // OpenAI 读取执行模型，覆盖任意聊天模型；不修改聊天选择/会话偏好，也不回退 DeepSeek。

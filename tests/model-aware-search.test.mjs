@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
 const source = readFileSync(new URL('qqbot-patches/model-aware-search-helper.js', root), 'utf8');
@@ -163,7 +164,7 @@ test('定向部署可重复执行，不覆盖模型/搜索配置或无关补丁'
   const index = join(dir, '..', 'index.js');
   writeFileSync(index, "export const inject = ['agents'];\n");
   writeFileSync(target, 'export async function bootstrapGateway(ctx, agents, config, logger) {\n    const manager = new SessionManager(ctx, agents, config, logger);\n}\n');
-  const args = [new URL('patch-qqbot.mjs', root).pathname, '--only=model-aware-search-inject,model-aware-search-helper,model-aware-fetch-helper,model-aware-search'];
+  const args = [fileURLToPath(new URL('patch-qqbot.mjs', root)), '--only=model-aware-search-inject,model-aware-search-helper,model-aware-fetch-helper,model-aware-search'];
   const run = () => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, QQBOT_PROFILE_DIR: temp } });
   const first = run(); assert.equal(first.status, 0, first.stderr);
   const once = readFileSync(target, 'utf8');

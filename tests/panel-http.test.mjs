@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, readdirSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -250,6 +250,25 @@ test('real panel HTTP: DSH_HOME/profile name and spaced Chinese paths; overlay w
     assert.equal(reread.json.model.provider, 'our-free-model');
     assert.equal(reread.json.model.model, 'combo:synthetic-free');
     assert.equal(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8'), basePatch);
+  });
+});
+
+test('real panel HTTP: people optimistic version check happens under the shared write lock', async () => {
+  await withPanel({}, async ({ profile, port, cookie }) => {
+    const file = join(profile, 'qqbot-people.json');
+    writeFileSync(file, JSON.stringify({ people: [{ name: '原始' }] }), { mode: 0o600 });
+    const before = await request(port, '/api/people', { cookie });
+    assert.equal(before.status, 200);
+    // A stale editor must be rejected without replacing the bot's newer update.
+    writeFileSync(file, JSON.stringify({ people: [{ name: '机器人刚写入' }] }), { mode: 0o600 });
+    const future = new Date(Date.now() + 5000);
+    utimesSync(file, future, future);
+    const stale = await request(port, '/api/people', { cookie, method: 'PUT', body: {
+      baseMtimeMs: before.json.mtimeMs,
+      data: { people: [{ name: '面板旧数据' }] },
+    } });
+    assert.equal(stale.status, 409, stale.text);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).people.map((person) => person.name), ['机器人刚写入']);
   });
 });
 

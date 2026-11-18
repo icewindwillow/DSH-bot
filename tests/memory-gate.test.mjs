@@ -24,7 +24,7 @@ process.env.HOME = home; // Isolate all homedir-based helper reads before setup.
 mkdirSync(join(home, '.dsh', 'memory'), { recursive: true });
 mkdirSync(join(home, '.dsh', 'profiles', 'qqbot'), { recursive: true });
 writeFileSync(join(home, '.dsh', 'profiles', 'qqbot', 'qqbot-people.json'), JSON.stringify({
-    people: [{ name: '测试档案成员', addressing: '测试档案称呼', openids: ['SID1'], groups: ['GID_TEST'], profile: {} }],
+    people: [{ name: '测试档案成员', addressing: '测试档案称呼', openids: ['SID1'], groups: ['GID_TEST'], profile: { relations: { 姐姐: '测试姐姐' } } }],
 }));
 process.env.QQBOT_PROFILE_DIR = join(home, '.dsh', 'profiles', 'qqbot');
 process.env.XIANGXIN_API_KEY = 'test-key';
@@ -34,6 +34,7 @@ const db = createMemoryStore(dbPath);
 db.close();
 
 let fetchCalls = 0;
+let lastBody = undefined;
 let answers = {
     store: { noul: 0.9 },
     type: { choice: '偏好' },
@@ -43,8 +44,9 @@ let answers = {
     sensitive: { noul: 0.01 },
     conflict: { noul: 0.02 },
 };
-globalThis.fetch = async () => {
+globalThis.fetch = async (url, opts) => {
     fetchCalls++;
+    lastBody = JSON.parse(opts.body);
     return { ok: true, json: async () => ({ answers }) };
 };
 
@@ -150,6 +152,56 @@ await check('分享购物/体验：store 低但 share 高 → 入库并带分享
         throw new Error('分享没有入库');
     if (!String(rows.at(-1).tags).includes('分享'))
         throw new Error('没带分享标签');
+});
+
+await check('事件兜底：请求句里的具体事件按「经历」入库', async () => {
+    answers = {
+        store: { noul: 0.11 },
+        event: { noul: 0.84 },
+        eventSubject: { choice: '说话人自己' },
+        type: { choice: '其他' },
+        subject: { choice: '无法判断' },
+        durability: { choice: '一次性' },
+        importance: { score: 1.4 },
+        sensitive: { noul: 0.01 },
+        conflict: { noul: 0.05 },
+    };
+    const before = rowsOf().length;
+    await send('把我姐发的照片撤回', 'SID1');
+    const rows = rowsOf();
+    if (rows.length !== before + 1)
+        throw new Error('事件没有入库');
+    const last = rows.at(-1);
+    if (!String(last.text).includes('[经历]'))
+        throw new Error(`类型不对：${last.text}`);
+    if (!String(last.text).includes('把我姐发的照片撤回'))
+        throw new Error('正文不对');
+    if (!String(last.tags).includes('中期'))
+        throw new Error('事件应按中期保存');
+});
+
+await check('近况已达标时不被事件覆盖', async () => {
+    answers = {
+        store: { noul: 0.02 },
+        event: { noul: 0.9 },
+        eventSubject: { choice: '说话人自己' },
+        type: { choice: '近况' },
+        subject: { choice: '说话人自己' },
+        durability: { choice: '一次性' },
+        importance: { score: 0.9 },
+        sensitive: { noul: 0.01 },
+        conflict: { noul: 0.02 },
+    };
+    const before = rowsOf().length;
+    await send('很丢脸啊', 'SID1');
+    const last = rowsOf().at(-1);
+    if (rowsOf().length !== before + 1 || !String(last.text).includes('[近况]'))
+        throw new Error(`应为近况：${last.text}`);
+});
+
+await check('说话人档案里的家人关系会传给象信', async () => {
+    if (!lastBody || lastBody.state?.['说话人档案']?.家人?.姐姐 !== '测试姐姐')
+        throw new Error('家人关系没有进 state');
 });
 
 // home is the mkdtemp-created isolated fixture root, never the real HOME.

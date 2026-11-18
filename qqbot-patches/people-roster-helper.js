@@ -506,6 +506,16 @@ function buildSpeakerContext(gid, record) {
     catch {
         // 维护提示失败不影响对话
     }
+
+    // 群友之间的互动边：这条消息点到了谁，就给一两行「你和 TA 最近的关系」
+    try {
+        const relationLine = globalThis.__qqbotRelations?.promptLines?.(gid, speaker, matched);
+        if (relationLine)
+            lines.push(relationLine);
+    }
+    catch {
+        // 关系边读取失败不影响对话
+    }
     return lines.join('\n');
 }
 /* <<< dsh-qqbot-patch:people-roster-helper <<< */

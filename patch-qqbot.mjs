@@ -69,6 +69,37 @@ const PATCHES = [
     needsFs: true,
   },
   {
+    name: 'meme-hook',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'meme-hook.js',
+    anchor: [
+      '    bot.use(messageFilter({ skipSelfEcho: false }));',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'self-memory-hook',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'self-memory-hook.js',
+    anchor: [
+      '    bot.use(messageFilter({ skipSelfEcho: false }));',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'history-ignored-filter',
+    file: join(PKG, 'features', 'history-store.js'),
+    snippet: 'history-ignored-filter.js',
+    anchor: [
+      'export function getHistoryStore() {',
+      '    if (!_store)',
+      '        _store = new MemoryHistoryStore();',
+      '    return _store;',
+      '}',
+    ],
+    needsFs: false,
+  },
+  {
     name: 'prompt-record-lookup',
     file: join(PKG, 'session', 'session-manager.js'),
     snippet: 'prompt-record-lookup.js',
@@ -336,7 +367,14 @@ const PATCHES = [
       '            if (msg.kind !== \'group\' || !msg.groupOpenid)',
       '                return false;',
       '            try {',
-      '                return decideGroupImplicit(msg.groupOpenid, msg.content);',
+      '                // 被真 @ 一定应：私域全量消息收不到 AT 事件，只能靠 mentions / 正文里的 @ 判断，',
+      '                // 否则「必须 @」的群里 @ 她反而会被门控吞掉。',
+      '                if (globalThis.__qqbotMention?.addressed?.(msg))',
+      '                    return true;',
+      '                // 主人 / 管理员说话就算叫到：必须 @ 的群、唤醒指数 0 的群也直接放行',
+      '                if (senderBypass({ id: msg.senderId, name: msg.senderName }))',
+      '                    return true;',
+      '                return decideGroupImplicit(msg.groupOpenid, msg.content, msg);',
       '            }',
       '            catch (err) {',
       '                // 门控本身不能把整条消息搞挂：异常时放行，交给回话门控和模型判断',
@@ -383,6 +421,13 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'model-status-helper',
+    file: join(PKG, 'transport', 'outbound.js'),
+    snippet: 'model-status-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'web-fetch-errors',
     file: join(PKG, 'transport', 'outbound.js'),
     snippet: 'web-fetch-errors.js',
@@ -402,6 +447,22 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'duplicate-reply-guard-helper',
+    file: join(PKG, 'transport', 'outbound.js'),
+    snippet: 'duplicate-reply-guard-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'duplicate-reply-guard',
+    file: join(PKG, 'transport', 'outbound.js'),
+    snippet: 'duplicate-reply-guard.js',
+    anchor: [
+      '        void this.send(record, fullText, \'sendMarkdown\');',
+    ],
+    needsFs: false,
+  },
+  {
     name: 'action-limiter',
     file: join(PKG, 'transport', 'outbound.js'),
     snippet: 'action-limiter.js',
@@ -414,6 +475,17 @@ const PATCHES = [
     snippet: 'ws-logging.js',
     anchor: [
       '    logger.info(`QQBot SDK initialized (UA: ${userAgent})`);',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'ws-watchdog',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'ws-watchdog.js',
+    anchor: [
+      '    bot.on(\'ready\', () => {',
+      '        console.log(`[im-qqbot] Bot ready! appId=${config.appId}`);',
+      '    });',
     ],
     needsFs: false,
   },
@@ -450,6 +522,13 @@ const PATCHES = [
     snippet: 'command-owner-helper.js',
     anchor: null,
     needsFs: true,
+  },
+  {
+    name: 'permissions-helper',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'permissions-helper.js',
+    anchor: null,
+    needsFs: false,
   },
   {
     name: 'command-owner-gate',
@@ -633,6 +712,15 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'tts-prompt',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'tts-prompt.js',
+    anchor: [
+      '                extraSections.push({ name: \'qqbot:person-feedback\', order: 94, text: personFeedback });',
+    ],
+    needsFs: false,
+  },
+  {
     name: 'diary-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'diary-helper.js',
@@ -658,6 +746,86 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'clock-prompt',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'clock-prompt.js',
+    anchor: [
+      '                extraSections.push({ name: \'qqbot:diary\', order: 96, text: diaryLine });',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'meme-helper',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'meme-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'meme-prompt',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'meme-prompt.js',
+    anchor: [
+      '            const moodLine = record.scope === \'group\' ? (globalThis.__qqbotMood?.promptLine?.(record.peerId) ?? \'\') : \'\';',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'meme-tool-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'meme-tool-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'meme-tool',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'meme-tool.js',
+    anchor: [
+      '    setupDiary(ctx, logger);',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'self-memory-helper',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'self-memory-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'self-memory-prompt',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'self-memory-prompt.js',
+    anchor: [
+      '            const moodLine = record.scope === \'group\' ? (globalThis.__qqbotMood?.promptLine?.(record.peerId) ?? \'\') : \'\';',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'note-tool-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'note-tool-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'note-tool',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'note-tool.js',
+    anchor: [
+      '    setupMemeTools(ctx, logger);',
+    ],
+    needsFs: false,
+  },
+  {
+    name: 'note-helper',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'note-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'interaction-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'interaction-helper.js',
@@ -668,6 +836,13 @@ const PATCHES = [
     name: 'person-card-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'person-card-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'group-relations-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'group-relations-helper.js',
     anchor: null,
     needsFs: false,
   },
@@ -764,6 +939,23 @@ const PATCHES = [
     file: join(PKG, 'transport', 'inbound.js'),
     snippet: 'image-generation-revoke.js',
     anchor: ['        await record.agent.whenIdle();'],
+    needsFs: false,
+  },
+  {
+    name: 'newsjudge-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'newsjudge-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'newsjudge',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'newsjudge.js',
+    anchor: [
+      '    // ── 生命周期 ──',
+      '    ctx',
+    ],
     needsFs: false,
   },
 ];

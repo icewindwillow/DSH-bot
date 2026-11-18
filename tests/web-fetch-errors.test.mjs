@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
 const load = (path) => readFileSync(new URL(path, root), 'utf8').trimEnd();
@@ -139,7 +140,7 @@ test('持久补丁可定向部署且重复应用字节幂等，不创建无关�
   const manager = join(target, 'session/session-manager.js');
   writeFileSync(outbound, original);
   writeFileSync(manager, '// fixture\n');
-  const run = () => spawnSync(process.execPath, [new URL('patch-qqbot.mjs', root).pathname,
+  const run = () => spawnSync(process.execPath, [fileURLToPath(new URL('patch-qqbot.mjs', root)),
     '--only=web-fetch-errors,web-fetch-error-guard,group-rules-helper'], {
     encoding: 'utf8', env: { ...process.env, QQBOT_PROFILE_DIR: temp },
   });

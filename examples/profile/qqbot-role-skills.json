@@ -1,3 +1,18 @@
 {
-  "skills": []
+  "_说明": "能力技能只用来「放行」：kind=capability 的技能没有 SKILL.md、不注入提示词，只看 audiences 决定谁能让机器人做这件事。voicePermission.skill 指定哪个技能是语音权限（缺省 voice-gen），voicePermission.affinityMin 是好感度门槛（0–100，缺省 60）；主人（qqbot-command-owners.json）永远放行。生图用 imagePermission，结构一样。",
+  "skills": [
+    {
+      "id": "voice-gen",
+      "name": "语音",
+      "category": "能力",
+      "kind": "capability",
+      "description": "允许让机器人发语音的人。把想放行的人写进 audiences（person 对应 qqbot-people.json 的 name，或直接写 openids）；留空则只有主人和好感度达标的人能用。",
+      "enabled": true,
+      "audiences": []
+    }
+  ],
+  "voicePermission": {
+    "skill": "voice-gen",
+    "affinityMin": 60
+  }
 }

@@ -144,11 +144,11 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
         return 'image/jpeg';
     };
 
-    /** 视觉分类：美食 / 人像 / 梗图 / 表情包 / 其他；失败返回空串，交给文字兜底 */
-    const classifyImageCategory = async (sourcePath) => {
+    /** 视觉调用：返回识别文本；没配置或调用失败返回 undefined（调用方据此区分「不可用」和「没识别出」） */
+    const askVision = async (sourcePath, prompt, maxTokens) => {
         const vision = config?.vision ?? {};
         if (vision.enabled !== true || !vision.provider || !vision.model)
-            return '';
+            return undefined;
         let llm;
         let attachments;
         try {
@@ -156,10 +156,10 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
             attachments = ctx.get('attachments');
         }
         catch {
-            return '';
+            return undefined;
         }
         if (!llm?.stream || !attachments?.saveImage)
-            return '';
+            return undefined;
         try {
             const bytes = fs.readFileSync(sourcePath);
             const mediaType = detectMediaType(bytes);
@@ -168,7 +168,7 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
             const message = createUserMessage({
                 content: [
                     { type: 'image', attachment: ref },
-                    { type: 'text', text: '只输出一个词，不要解释：美食 / 人像 / 梗图 / 表情包 / 其他。美食=食物饮品菜品；人像=真人自拍或人物照片；梗图=网络搞笑图/带字meme；表情包=卡通/表情/贴纸类；其他=风景/截图/物品/游戏画面等。' },
+                    { type: 'text', text: prompt },
                 ],
                 source: { kind: 'plugin', plugin: 'dsh-im-qqbot' },
             });
@@ -177,19 +177,32 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 provider: vision.provider,
                 model: vision.model,
                 messages: [message],
-                maxTokens: 64,
+                maxTokens,
                 signal: AbortSignal.timeout(15000),
             }))
                 assembler.push(chunk);
-            const text = assembler.blocks().filter((block) => block.type === 'text').map((block) => block.text).join(' ').trim();
-            for (const category of ['美食', '人像', '梗图', '表情包'])
-                if (text.includes(category)) return category;
-            return '其他';
+            return assembler.blocks().filter((block) => block.type === 'text').map((block) => block.text).join(' ').trim();
         }
         catch (err) {
-            console.log(`[im-qqbot] 媒体分类失败: ${String(err?.message ?? err).slice(0, 80)}`);
-            return '';
+            console.log(`[im-qqbot] 视觉调用失败: ${String(err?.message ?? err).slice(0, 80)}`);
+            return undefined;
         }
+    };
+
+    /** 视觉分类：美食 / 人像 / 梗图 / 表情包 / 刀剑 / 威士忌 / 健身 / 其他；失败返回空串，交给文字兜底 */
+    const classifyImageCategory = async (sourcePath) => {
+        const text = await askVision(sourcePath, '只输出一个词，不要解释：美食 / 人像 / 梗图 / 表情包 / 刀剑 / 威士忌 / 健身 / 其他。美食=食物菜品；人像=真人自拍或人物照片；梗图=网络搞笑图/带字meme；表情包=卡通/表情/贴纸类；刀剑=刀、剑、武士刀、练习刀、刀装护手、刀鞘、研磨刃面、道场练武兵器等；威士忌=酒瓶、酒标、酒杯、威士忌酒液特写（不要归到美食）；健身=健身房、器械、举铁、力量训练场景（不要归到人像）；其他=风景/截图/普通物品/游戏画面等。', 64);
+        if (text === undefined)
+            return '';
+        for (const category of ['威士忌', '健身', '刀剑', '美食', '人像', '梗图', '表情包'])
+            if (text.includes(category)) return category;
+        return '其他';
+    };
+
+    /** 一句话描述图片里的事/物/状态，给长期记忆用；失败返回空串 */
+    const describeImage = async (sourcePath) => {
+        const text = await askVision(sourcePath, '用一句中文说清图里发生了什么、关键物品是什么、它现在是什么状态。只输出这句话，不超过40字，不要客套，不要猜人物身份。', 96);
+        return String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
     };
 
     const cleanText = (text) => String(text ?? '')
@@ -352,8 +365,19 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 if (typeof local === 'string' && local.startsWith('/'))
                     paths.add(local);
             }
-            if (paths.size === 0)
+            // 附件下载结果只挂在中间件 state 上（message.attachments 里只有原始 url），不读这里就等于永远拿不到图
+            for (const file of (Array.isArray(mCtx?.state?.downloadedFiles) ? mCtx.state.downloadedFiles : [])) {
+                const local = file?.localPath;
+                if (typeof local === 'string' && local.startsWith('/'))
+                    paths.add(local);
+            }
+            if (paths.size === 0) {
+                const imageCount = (Array.isArray(msg.attachments) ? msg.attachments : [])
+                    .filter((att) => String(att?.content_type ?? '').startsWith('image')).length;
+                if (imageCount > 0)
+                    console.log(`[im-qqbot] 媒体跳过: 有 ${imageCount} 张图但没拿到本地路径（未下载或下载失败）`);
                 return;
+            }
             const gid = String(msg.groupOpenid);
             const senderName = canonicalName(msg.senderId, String(msg.senderName ?? '').trim());
             const rawName = String(msg.senderName ?? '').trim();
@@ -361,7 +385,8 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
             const sameSender = recentEntries.filter((m) => String(m.name ?? '') === rawName).slice(-5)
                 .map((m) => cleanText(m.content).slice(0, 180))
                 .filter(Boolean);
-            const caption = cleanText(content)
+            const ownText = cleanText(content);
+            const caption = ownText
                 || (sameSender.length > 0 ? sameSender[sameSender.length - 1].slice(0, 80) : '')
                 || '图片';
             const recent = recentEntries.slice(-8)
@@ -370,11 +395,14 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 .join('\n')
                 .slice(0, 1500);
             // 只有「说话人自己的生活/经历/感想」才归档；普通梗图、表情包、网图一律不转
-            // 收图/放图名单：由本地管理员配置。按 categories 用视觉分类，梗图/表情包排除；
+            // 收图/放图名单：白泽等。按 categories 用视觉分类，梗图/表情包排除；
             // 视觉不可用时只用文字线索保守兜底，不把整包图都收进来。
             const allowEntry = mediaAllowEntry(gid, msg.senderId, senderName);
             const allowCategories = Array.isArray(allowEntry?.categories)
                 ? allowEntry.categories.map((category) => String(category ?? '').trim()).filter(Boolean)
+                : [];
+            const allowKeywords = Array.isArray(allowEntry?.keywords)
+                ? allowEntry.keywords.map((keyword) => String(keyword ?? '').trim()).filter(Boolean)
                 : [];
             let allowlisted = false;
             let allowCategory = '';
@@ -382,8 +410,11 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 const source = paths.values().next().value;
                 allowCategory = source ? await classifyImageCategory(source) : '';
                 const text = [caption, ...sameSender].join('\n');
+                const keywordHit = allowKeywords.find((keyword) => text.includes(keyword)) ?? '';
                 const memeText = /梗图|表情包|表情|哈哈|笑死|草|乐|绷|图包|meme/i.test(text);
-                if (allowCategory !== '') {
+                if (keywordHit !== '')
+                    allowlisted = true;
+                else if (allowCategory !== '') {
                     allowlisted = allowCategory !== '梗图' && allowCategory !== '表情包'
                         && (allowCategories.length === 0 || allowCategories.includes(allowCategory));
                 }
@@ -394,8 +425,10 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                         allowlisted = true;
                     else if (allowCategories.includes('人像') && /自拍|人像|照片|拍|脸|妆|穿|裙|合影/i.test(text))
                         allowlisted = true;
+                    else if (allowCategories.includes('刀剑') && /刀|剑|神道流|道场|练武|太刀|打刀|居合/i.test(text))
+                        allowlisted = true;
                 }
-                console.log(`[im-qqbot] 媒体名单判定: ${senderName} category=${allowCategory || '?'} categories=${allowCategories.join('/') || '全部'} → ${allowlisted ? '放行' : '跳过'}`);
+                console.log(`[im-qqbot] 媒体名单判定: ${senderName} category=${allowCategory || '?'} categories=${allowCategories.join('/') || '全部'}${keywordHit ? ` keyword=${keywordHit}` : ''} → ${allowlisted ? '放行' : '跳过'}`);
             }
             // 测试/显式工具可以临时跳过判定；正常收图不设这个全局
             const verdict = allowlisted || globalThis.__qqbotMediaForceArchive === true
@@ -418,8 +451,8 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 console.log(`[im-qqbot] 媒体判定失败（${verdict.error}），按生活关键词兜底：${senderName}`);
             else
                 console.log(`[im-qqbot] 媒体判定: ${senderName} personal=${verdict.personal.toFixed(2)} worth=${verdict.worth.toFixed(2)} → 归档`);
-            for (const source of paths)
-                archiveFile(source, {
+            for (const source of paths) {
+                const inserted = archiveFile(source, {
                     groupId: gid,
                     groupName: groupNames.get(gid) ?? '',
                     senderId: String(msg.senderId ?? ''),
@@ -427,6 +460,31 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                     caption,
                     context: recent,
                 });
+                if (!inserted)
+                    continue;
+                // 图片正文是纯占位符，消息门控拿不到；先补一句图里发生了什么，再写一条「经历」进长期记忆。
+                // 只对「这条消息本身没字」的图做视觉描述，避免把上一条无关的文字当成本图说明。
+                let finalCaption = caption;
+                if (ownText === '') {
+                    const description = await describeImage(source);
+                    if (description !== '')
+                        finalCaption = description;
+                }
+                const row = locateMedia({ image: source });
+                if (!row || finalCaption === '' || finalCaption === '图片')
+                    continue;
+                if (String(row.caption ?? '') === '' || String(row.caption ?? '') === '图片')
+                    updateMeta.run(finalCaption.slice(0, 200), recent || String(row.context ?? ''), gid,
+                        groupNames.get(gid) ?? '', String(msg.senderId ?? ''), senderName, Number(row.id));
+                void globalThis.__qqbotMemoryGate?.recordMedia({
+                    gid,
+                    senderId: String(msg.senderId ?? ''),
+                    senderName,
+                    caption: finalCaption,
+                    mediaId: Number(row.id),
+                    createdAt: Date.now(),
+                });
+            }
         }
         catch (err) {
             console.log(`[im-qqbot] 媒体归档异常: ${err.message}`);
@@ -687,7 +745,7 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
                 additionalProperties: false,
                 properties: {
                     query: { type: 'string', description: '关键词，例如 威士忌、酒、旅行、猫' },
-                    person: { type: 'string', description: '分享人的昵称或档案称呼，例如 成员甲' },
+                    person: { type: 'string', description: '分享人的昵称或档案称呼，例如 杰哥' },
                     group: { type: 'string', description: '群名或 group_openid' },
                     tag: { type: 'string', description: '收藏标签，例如 风景、美食' },
                     favorites: { type: 'boolean', description: 'true = 只看收藏过的图' },
