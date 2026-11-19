@@ -55,6 +55,13 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'profile-document-middleware',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'profile-document-reader.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'profile-document-session',
     file: join(PKG, 'session', 'session-manager.js'),
     snippet: 'profile-document-reader.js',
@@ -68,6 +75,13 @@ const PATCHES = [
     anchor: [
       '    bot.use(errorHandler());',
     ],
+    needsFs: false,
+  },
+  {
+    name: 'vision-preflight',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'vision-preflight.js',
+    anchor: ['    bot.use(attachmentProcessor(config, logger));'],
     needsFs: false,
   },
   {
@@ -342,6 +356,20 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'complex-work-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'complex-work-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'complex-work-register',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'complex-work-register.js',
+    anchor: ['    const manager = new SessionManager(ctx, agents, config, logger);'],
+    needsFs: false,
+  },
+  {
     name: 'memory-gate-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'memory-gate-helper.js',
@@ -577,6 +605,20 @@ const PATCHES = [
     file: join(PKG, 'gateway', 'middleware-setup.js'),
     snippet: 'permissions-helper.js',
     anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'early-work-reply',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'early-work-reply.js',
+    anchor: [
+      '    // 9. 并发串行 + 消息合并（同 peer 排队，避免 session 冲突）',
+      '    bot.use(concurrencyGuard({',
+      "        strategy: 'merge',",
+      '        maxQueue: config.maxQueue,',
+      '        maxProcessingMs: config.processingTimeoutMs,',
+      '    }));',
+    ],
     needsFs: false,
   },
   {

@@ -205,6 +205,23 @@ function setupMediaArchive(ctx, bot, manager, config, logger) {
         return String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
     };
 
+    const describeForContext = async (sourcePath, { transcribeDiary = false } = {}) => {
+        if (process.env.QQBOT_VISION_PREFLIGHT !== 'on') return undefined;
+        try {
+            const file = fs.statSync(sourcePath);
+            if (!file.isFile() || file.size > 8 * 1024 * 1024) return undefined;
+        } catch { return undefined; }
+        if (!transcribeDiary) return { what: await describeImage(sourcePath) };
+        const text = await askVision(sourcePath,
+            '只输出 JSON。what 用一句话说明画面，transcript 逐字抄写日记截图正文开头，最多 120 字；其他图片的 transcript 留空。不补字、不猜身份。格式：{"what":"...","transcript":"..."}', 1600);
+        try {
+            const parsed = JSON.parse(text?.match(/\{[\s\S]*\}/)?.[0] ?? '');
+            return { what: String(parsed.what ?? '').trim().slice(0, 120),
+                transcript: typeof parsed.transcript === 'string' ? parsed.transcript.slice(0, 120) : '' };
+        } catch { return { what: '' }; }
+    };
+    globalThis.__qqbotVision = { describe: describeForContext };
+
     const cleanText = (text) => String(text ?? '')
         .replace(/^\s*-\s*Image:[^\n]*/gm, '')
         .replace(/\[(图片|视频|文件|表情)[^\]]*\]/g, '')

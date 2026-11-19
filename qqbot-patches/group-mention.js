@@ -384,13 +384,6 @@
             speakers.set(gid, { id: msg.senderId ?? '', name: msg.senderName ?? '' });
             // 记住最近活跃的群：switch_role_skill 工具没有会话上下文，靠这个定位
             globalThis.__qqbotLastGid = gid;
-            // 事件追踪：每条群消息都过一遍（异步、不阻塞；失败不影响消息）
-            try {
-                globalThis.__qqbotEventDetect?.(msg);
-            }
-            catch {
-                // 忽略
-            }
             // 本 turn 待处理的入站消息队列：角色技能按队首判断「在回谁」，
             // turn/end 时清掉已被取走的部分（见 role-skills-helper.js）。
             // 只记「会进 agent」的消息，避免被门控挡掉的消息占住队首。
@@ -423,8 +416,12 @@
             recent.set(gid, bucket);
             // 长期记忆门控：每条群消息都送象信判一次（含没叫她的消息；异步，不阻塞）
             // 纯表情包没有文字信息，跳过门控省一次判断；上下文里的文字消息仍会正常入库
-            if (!globalThis.__qqbotStickerInbound?.isStickerOnlyImage(msg))
-                void globalThis.__qqbotMemoryGate?.consider(ctx);
+            if (!globalThis.__qqbotStickerInbound?.isStickerOnlyImage(msg)) {
+                if (globalThis.__qqbotMemoryGate)
+                    void globalThis.__qqbotMemoryGate.consider(ctx);
+                else
+                    void globalThis.__qqbotEventDetect?.(msg);
+            }
             // 同一个人在本群累计发到第 3 条，自动建空壳档案
             const next = bumpSenderCount(gid, msg.senderId);
             if (next === 3 && msg.senderId && msg.senderName) {

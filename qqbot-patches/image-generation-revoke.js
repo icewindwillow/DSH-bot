@@ -3,5 +3,6 @@
             await record.agent.whenIdle();
         } finally {
             if (record.__qqbotImageGenerationGrant?.msgId === msg.messageId) record.__qqbotImageGenerationGrant = undefined;
+            globalThis.__qqbotComplexWork?.release(record, message);
         }
 /* <<< dsh-qqbot-patch:image-generation-revoke <<< */

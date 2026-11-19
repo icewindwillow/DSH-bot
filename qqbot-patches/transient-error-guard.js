@@ -8,11 +8,11 @@
             });
             this.logger.warn?.(`im-qqbot: 模型错误已静默（${failure.code}），状态已上报面板`);
         }
-        else if (failure !== undefined && !SILENT_TURN_ERROR_CODES.has(failure.code) && !TRANSIENT_TURN_ERROR_CODES.has(failure.code)) {
+        else if (failure !== undefined && record.replyTarget?.scope !== 'group' && !SILENT_TURN_ERROR_CODES.has(failure.code) && !TRANSIENT_TURN_ERROR_CODES.has(failure.code)) {
             void this.send(record, `⚠️ 本轮异常结束\n\`${failure.code}\`: ${failure.message}`, 'sendTurnEndError');
         }
         else if (failure !== undefined) {
-            this.logger.warn?.(`im-qqbot: 瞬时错误已静默 (${failure.code}): ${failure.message}`);
+            this.logger.warn?.(`im-qqbot: 轮次异常已静默 (${failure.code})`);
         }
         else {
             // 正常结束：标记模型已恢复（保留 lastError 供面板回看）

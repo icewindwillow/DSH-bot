@@ -26,6 +26,7 @@ import { credentialStatus, updateCredentials } from './credentials.mjs';
 import { readImageGenerationSettings, writeImageGenerationSettings } from './image-generation.mjs';
 import { readTtsSettings, writeTtsSettings } from './tts.mjs';
 import { memoryPresentation } from './memory-presentation.mjs';
+import { validateComplexWorkPolicy } from '../qqbot-patches/complex-work-helper.js';
 import {
   hasManualMemory, listAlbumPhotos, listOwnedMemories, memoryImageMaxBytes, readAlbumPhoto,
   readMemoryImage, saveMemoryImage, validateMemoryImage, withMemoryImages,
@@ -505,6 +506,7 @@ function validatePersonas(data) {
       if (typeof id !== 'string' || !(id in modules))
         throw new Error(`人格 ${key} 引用了不存在的模块：${String(id)}`);
     }
+    if (entry?.complexWork !== undefined) validateComplexWorkPolicy(entry.complexWork);
     if (entry?.useSchedule !== undefined && typeof entry.useSchedule !== 'boolean')
       throw new Error(`人格 ${key} 的时间表开关必须是布尔值`);
     const personaName = entry?.name;
