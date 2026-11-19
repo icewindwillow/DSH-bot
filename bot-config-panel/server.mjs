@@ -26,6 +26,11 @@ import { credentialStatus, updateCredentials } from './credentials.mjs';
 import { readImageGenerationSettings, writeImageGenerationSettings } from './image-generation.mjs';
 import { readTtsSettings, writeTtsSettings } from './tts.mjs';
 import { memoryPresentation } from './memory-presentation.mjs';
+import {
+  hasManualMemory, listAlbumPhotos, listOwnedMemories, memoryImageMaxBytes, readAlbumPhoto,
+  readMemoryImage, saveMemoryImage, validateMemoryImage, withMemoryImages,
+} from './personal-album.mjs';
+import { beijingScheduleTime, currentPersonaSchedule, personaSchedulePrompt, validatePersonaSchedule } from './public/app/shared/persona-schedule.js';
 import { DAY_MS, dashboardDayKey, dashboardDayStart } from './public/app/shared/dashboard-day.js';
 import {
   readFileSync, writeFileSync, copyFileSync, existsSync, statSync,
@@ -58,11 +63,12 @@ const MEDIA_PRIMARY = join(PROFILE_DIR, 'media');
 const INTEREST_CONFIG = GROUPS_META;
 const INTEREST_STATE = join(PROFILE_DIR, 'qqbot-interest-state.json');
 const INTEREST_DB = resolve(process.env.QQBOT_MEMORY_DB ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'memory', 'ltm.db'));
+const MEMORY_IMAGE_BODY_LIMIT = Math.ceil(memoryImageMaxBytes / 3) * 4 + 8192;
 const MEDIA_FALLBACK = join(homedir(), '.dsh', 'qqbot-media');
 const WAKE_INDEX_DEFAULT = 100;
 const INDEX = join(HERE, 'public', 'index.html');
 const PANEL_APP = join(HERE, 'public', 'app');
-const PANEL_PAGES = Object.freeze(['home', 'settings', 'persona', 'people', 'memories', 'interest', 'gallery', 'events', 'owners']);
+const PANEL_PAGES = Object.freeze(['home', 'settings', 'persona', 'schedule', 'people', 'memories', 'interest', 'gallery', 'album', 'events', 'owners']);
 const PANEL_COMPONENTS = Object.freeze(['overlays']);
 const DSH_CREDENTIALS = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), '.credentials.yaml');
 const DSH_MODEL_KEYS = ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'XIANGXIN_API_KEY', 'OPENCODE_GO_API_KEY'];
@@ -499,6 +505,8 @@ function validatePersonas(data) {
       if (typeof id !== 'string' || !(id in modules))
         throw new Error(`人格 ${key} 引用了不存在的模块：${String(id)}`);
     }
+    if (entry?.useSchedule !== undefined && typeof entry.useSchedule !== 'boolean')
+      throw new Error(`人格 ${key} 的时间表开关必须是布尔值`);
     const personaName = entry?.name;
     if (personaName !== undefined && personaName !== null && typeof personaName !== 'string')
       throw new Error(`人格 ${key} 的名称必须是字符串`);
@@ -529,9 +537,9 @@ function profileDocumentVersion(doc) {
   return createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }
 
-function requireProfileDocumentVersion(doc, version, label) {
+function requireProfileDocumentVersion(doc, version, label, recovery = '请先刷新页面再保存。') {
   if (version === profileDocumentVersion(doc)) return;
-  const error = new Error(`${label}版本已变化，请先刷新页面再保存。`);
+  const error = new Error(`${label}版本已变化，${recovery}`);
   error.status = 409;
   throw error;
 }
@@ -1203,6 +1211,16 @@ function renderPanelIndex() {
   return html;
 }
 
+function readOwnedMemories() {
+  const schedule = validatePersonaSchedule(readProfileDocument(PROFILE_DIR, 'persona-schedule'));
+  return listOwnedMemories(INTEREST_DB, schedule);
+}
+
+function memoryImageTargetExists(memoryId) {
+  if (memoryId === 'bjd') return readOwnedMemories().some(memory => memory.id === memoryId);
+  return hasManualMemory(INTEREST_DB, memoryId);
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`);
 
@@ -1220,16 +1238,17 @@ const server = createServer((req, res) => {
   const cookies = String(req.headers.cookie ?? '').split(';').map(v => v.trim());
   if (url.pathname.startsWith('/api/') && !cookies.includes(`dsh_bot_session=${SESSION_COOKIE}`))
     return send(401, { ok: false, error: '请先打开本机面板页面' });
-  const readBody = () => new Promise((resolve, reject) => {
-    let raw = '', size = 0, tooLarge = false;
+  const readBody = (limit = 1024 * 1024, tooLarge = '请求体超出 1 MiB 上限') => new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > 1024 * 1024) { tooLarge = true; raw = ''; return; }
-      if (!tooLarge) raw += chunk;
+      if (size > limit) { chunks.length = 0; return; }
+      chunks.push(chunk);
     });
     req.on('end', () => {
-      if (tooLarge) return reject(new Error('请求体超出 1 MiB 上限'));
-      try { resolve(raw === '' ? {} : JSON.parse(raw)); }
+      if (size > limit) return reject(Object.assign(new Error(tooLarge), { status: 413 }));
+      try { resolve(size === 0 ? {} : JSON.parse(Buffer.concat(chunks, size).toString('utf8'))); }
       catch { reject(new Error('请求体不是合法 JSON')); }
     });
     req.on('error', reject);
@@ -1397,6 +1416,35 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/persona-schedule') {
+    const snapshot = (data) => {
+      const normalized = validatePersonaSchedule(data);
+      const time = beijingScheduleTime();
+      const current = currentPersonaSchedule(normalized, time);
+      return { ok: true, scheduleRevision: 2, data: normalized, version: profileDocumentVersion(data), time,
+        current: current ? { id: current.id, title: current.title, probability: current.probability, sleep: current.sleep } : null, preview: personaSchedulePrompt(current, time) };
+    };
+    if (req.method === 'GET') {
+      try {
+        const data = readProfileDocument(PROFILE_DIR, 'persona-schedule');
+        return send(200, snapshot(data));
+      } catch {
+        return send(500, { ok: false, error: '无法读取周表，请检查本地配置后重试。' });
+      }
+    }
+    if (req.method === 'PUT') {
+      readBody().then(({ data, baseVersion }) => {
+        const validated = validatePersonaSchedule(data);
+        const saved = withProfileDocuments(db => db.update('persona-schedule', current => {
+          requireProfileDocumentVersion(current, baseVersion, '时间表', '请先点击「重新读取」。');
+          return validated;
+        }));
+        return send(200, { ...snapshot(saved), restartRequired: false });
+      }).catch(err => send(err?.status === 409 ? 409 : 400, { ok: false, error: String(err?.message ?? err) }));
+      return;
+    }
+  }
+
   if (req.method === 'PUT' && url.pathname === '/api/personas') {
     readBody().then(({ data, baseVersion }) => {
       validatePersonas(data);
@@ -1494,16 +1542,31 @@ const server = createServer((req, res) => {
       text text not null,
       tags text not null default '',
       pinned integer not null default 0,
+      min_affinity integer not null default 0 check(min_affinity between 0 and 100),
+      min_familiarity integer not null default 0 check(min_familiarity between 0 and 100),
       created_at integer not null,
       updated_at integer not null
     )`);
-    // 老库没有 topic 列，补一列，不重建表
-    try {
-      const cols = db.prepare('pragma table_info(bot_memory_library)').all().map((row) => String(row.name ?? ''));
-      if (!cols.includes('topic'))
-        db.exec("alter table bot_memory_library add column topic text not null default ''");
+    const columns = () => db.prepare('pragma table_info(bot_memory_library)').all().map(row => row.name);
+    const required = {
+      topic: "text not null default ''",
+      min_affinity: 'integer not null default 0 check(min_affinity between 0 and 100)',
+      min_familiarity: 'integer not null default 0 check(min_familiarity between 0 and 100)',
+    };
+    const before = columns();
+    if (Object.keys(required).some(column => !before.includes(column))) {
+      db.exec('begin immediate');
+      try {
+        const existing = columns();
+        for (const [column, definition] of Object.entries(required)) {
+          if (!existing.includes(column)) db.exec(`alter table bot_memory_library add column ${column} ${definition}`);
+        }
+        db.exec('commit');
+      } catch (err) {
+        db.exec('rollback');
+        throw err;
+      }
     }
-    catch { /* 改不了列就按无主题处理 */ }
     db.exec(`create table if not exists bot_memory_groups (
       memory_id integer not null,
       group_openid text not null,
@@ -1608,6 +1671,8 @@ const server = createServer((req, res) => {
         text: String(row.text ?? ''),
         tags: String(row.tags ?? ''),
         pinned: Number(row.pinned) === 1,
+        minAffinity: row.min_affinity,
+        minFamiliarity: row.min_familiarity,
         scopeType: scopes.has(Number(row.id)) ? 'personas' : paused.has(Number(row.id)) ? 'legacy-modules' : byId.has(Number(row.id)) ? 'legacy-groups' : 'personas',
         personaIds: scopes.get(Number(row.id)) ?? [],
         groups: scopes.has(Number(row.id)) || paused.has(Number(row.id)) ? [] : byId.get(Number(row.id)) ?? [],
@@ -1618,6 +1683,13 @@ const server = createServer((req, res) => {
   };
   const privateMemoryTags = (value) => String(value ?? '').trim().slice(0, 300)
     .split(/\s+/).filter((tag) => !/^pm:\d+$/i.test(tag)).join(' ');
+  const memoryShareThresholds = ({ minAffinity, minFamiliarity }) => {
+    if ([minAffinity, minFamiliarity].some(value =>
+      value !== undefined && (!Number.isInteger(value) || value < 0 || value > 100))) {
+      throw new Error('分享阈值须为 0 到 100 的整数。');
+    }
+    return [minAffinity, minFamiliarity];
+  };
   const memoryPersonaCatalog = () => {
     const doc = readPersonas();
     const entries = doc.personas ?? {};
@@ -1689,7 +1761,7 @@ const server = createServer((req, res) => {
       const db = new DatabaseSync(dbPath);
       try {
         ensureMemoryTables(db);
-        return send(200, { ok: true, memories: readMemoryLibrary(db, gid) });
+        return send(200, { ok: true, memories: withMemoryImages(PROFILE_DIR, readMemoryLibrary(db, gid)) });
       }
       finally {
         db.close();
@@ -1704,6 +1776,7 @@ const server = createServer((req, res) => {
       const text = String(body?.text ?? '').trim();
       const tags = privateMemoryTags(body?.tags);
       const pinned = body?.pinned === true ? 1 : 0;
+      const [minAffinity = 0, minFamiliarity = 0] = memoryShareThresholds(body ?? {});
       if (!text)
         return send(400, { ok: false, error: '内容必填' });
       if (text.length > 4000)
@@ -1716,8 +1789,9 @@ const server = createServer((req, res) => {
           ensureMemoryTables(db);
           db.exec('begin');
           const now = Date.now();
-          const info = db.prepare('insert into bot_memory_library (topic, text, tags, pinned, created_at, updated_at) values (?, ?, ?, ?, ?, ?)')
-            .run(topic, text, tags, pinned, now, now);
+          const info = db.prepare(`insert into bot_memory_library
+            (topic, text, tags, pinned, min_affinity, min_familiarity, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(topic, text, tags, pinned, minAffinity, minFamiliarity, now, now);
           const id = Number(info.lastInsertRowid);
           db.prepare("insert into bot_memory_persona_scope (memory_id, persona_ids) values (?, '[]')").run(id);
           db.exec('commit');
@@ -1742,6 +1816,7 @@ const server = createServer((req, res) => {
       const text = String(body?.text ?? '').trim();
       const tags = privateMemoryTags(body?.tags);
       const pinned = body?.pinned === true ? 1 : 0;
+      const [minAffinity = null, minFamiliarity = null] = memoryShareThresholds(body ?? {});
       if (!Number.isInteger(id) || id <= 0 || !text)
         return send(400, { ok: false, error: 'id 和内容必填' });
       if (text.length > 4000)
@@ -1754,8 +1829,9 @@ const server = createServer((req, res) => {
         try {
           ensureMemoryTables(db);
           db.exec('begin');
-          const info = db.prepare('update bot_memory_library set topic = ?, text = ?, tags = ?, pinned = ?, updated_at = ? where id = ?')
-            .run(topic, text, tags, pinned, Date.now(), id);
+          const info = db.prepare(`update bot_memory_library set topic = ?, text = ?, tags = ?, pinned = ?,
+            min_affinity = coalesce(?, min_affinity), min_familiarity = coalesce(?, min_familiarity), updated_at = ? where id = ?`)
+            .run(topic, text, tags, pinned, minAffinity, minFamiliarity, Date.now(), id);
           if (Number(info.changes) === 0) {
             db.exec('rollback');
             return send(404, { ok: false, error: '没有这条记忆。' });
@@ -2022,6 +2098,71 @@ const server = createServer((req, res) => {
       return send(200, { ok: true, config, backup: null });
     }).catch((err) => send(400, { ok: false, error: String(err?.message ?? err) }));
     return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/personal-album') {
+    try { return send(200, { ok: true, photos: listAlbumPhotos(PROFILE_DIR) }); }
+    catch { return send(500, { ok: false, error: '无法读取小易的相册索引' }); }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/personal-album/memories') {
+    try {
+      return send(200, { ok: true, memories: withMemoryImages(PROFILE_DIR, readOwnedMemories()) });
+    } catch {
+      return send(500, { ok: false, error: '无法读取小易自己的东西' });
+    }
+  }
+
+  if (url.pathname === '/api/personal-album/memory-image') {
+    if (req.method === 'POST') {
+      readBody(MEMORY_IMAGE_BODY_LIMIT, '图片大小不能超过 8 MiB。').then(body => {
+        if (body?.memoryId !== 'bjd' && (!Number.isSafeInteger(body?.memoryId) || body.memoryId <= 0)) {
+          return send(400, { ok: false, error: '请选择要关联的记忆。' });
+        }
+        let image;
+        try { image = validateMemoryImage(body); }
+        catch (err) { return send(400, { ok: false, error: err.message }); }
+        try {
+          if (!memoryImageTargetExists(body.memoryId)) {
+            return send(404, { ok: false, error: '这条记忆已不存在，请刷新后重试。' });
+          }
+          return send(200, { ok: true, ...saveMemoryImage(PROFILE_DIR, body.memoryId, image) });
+        } catch {
+          return send(500, { ok: false, error: '无法保存记忆图片，请重试。' });
+        }
+      }).catch(err => send(err.status ?? 400, { ok: false, error: err.message }));
+      return;
+    }
+    if (req.method === 'GET') {
+      const id = Number(url.searchParams.get('id'));
+      const value = url.searchParams.get('memoryId');
+      const memoryId = value === 'bjd' ? value : Number(value);
+      if (!Number.isSafeInteger(id) || id <= 0 ||
+          (memoryId !== 'bjd' && (!Number.isSafeInteger(memoryId) || memoryId <= 0))) {
+        return send(400, { ok: false, error: '图片编号或记忆编号无效。' });
+      }
+      try {
+        const photo = memoryImageTargetExists(memoryId) && readMemoryImage(PROFILE_DIR, id, memoryId);
+        if (!photo) return send(404, { ok: false, error: '这条记忆下没有这张图片。' });
+        res.writeHead(200, { 'content-type': photo.type, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
+        return res.end(photo.data);
+      } catch {
+        return send(500, { ok: false, error: '无法读取记忆图片。' });
+      }
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/personal-album/photo') {
+    const id = Number(url.searchParams.get('id'));
+    if (!Number.isSafeInteger(id) || id <= 0) return send(400, { ok: false, error: '图片编号无效' });
+    try {
+      const photo = readAlbumPhoto(PROFILE_DIR, id);
+      if (!photo) return send(404, { ok: false, error: '图片文件不存在' });
+      res.writeHead(200, { 'content-type': photo.type, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
+      return res.end(photo.data);
+    } catch {
+      return send(500, { ok: false, error: '无法读取相册图片' });
+    }
   }
 
   // 图库：收图/放图名单（只读，供面板显示）

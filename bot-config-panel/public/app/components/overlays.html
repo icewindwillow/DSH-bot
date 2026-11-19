@@ -51,3 +51,30 @@
 <div class="sc-modal" id="settingsDetailModal"><div class="sc-modal-box"><div class="sc-modal-head"><h2 id="settingsDetailTitle">详细设置</h2><button class="sc-modal-close" id="settingsDetailClose">×</button></div><div id="settingsDetailBody"></div></div></div>
 <div class="sc-modal" id="ttsProviderModal"><div class="sc-modal-box tts-provider-modal-box"><div class="sc-modal-head"><h2 id="ttsProviderTitle">语音服务配置</h2><button class="sc-modal-close" id="ttsProviderClose">×</button></div><div id="ttsProviderBody"></div></div></div>
 <div class="sc-modal" id="imageConfigModal"><div class="sc-modal-box image-config-modal-box"><div class="sc-modal-head"><h2>生图配置</h2><button class="sc-modal-close" id="imageConfigClose">×</button></div><div id="imageConfigBody"></div></div></div>
+
+<dialog id="albumUpload" class="album-preview album-upload" aria-labelledby="albumUploadTitle">
+  <form id="albumUploadForm">
+    <h2 id="albumUploadTitle">上传记忆图片</h2>
+    <p id="albumUploadMemory"></p>
+    <label class="field" for="albumUploadFile">选择图片</label>
+    <input id="albumUploadFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" aria-describedby="albumUploadHint" required>
+    <p id="albumUploadHint" class="hint">支持 JPG、PNG、WebP、GIF，单张最大 8 MiB。</p>
+    <label class="field" for="albumUploadTags">图片标签</label>
+    <input id="albumUploadTags" type="text" maxlength="519" placeholder="例如 白猫 童年" aria-describedby="albumUploadTagHint">
+    <p class="hint" id="albumUploadTagHint">用空格或逗号分隔，最多 8 个，每个最多 32 个字。</p>
+    <p id="albumUploadMessage" role="status" hidden></p>
+    <div class="album-upload-actions">
+      <button id="albumUploadCancel" type="button" class="ghost">取消</button>
+      <button id="albumUploadSave" type="submit" class="primary">上传并关联</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="albumPreview" class="album-preview" aria-labelledby="albumPreviewTitle">
+  <div class="album-preview-top">
+    <h2 id="albumPreviewTitle"></h2>
+    <form method="dialog"><button type="submit" class="small ghost">关闭</button></form>
+  </div>
+  <img id="albumPreviewImage" alt="">
+  <p id="albumPreviewCaption" hidden></p>
+  <a id="albumPreviewSource" target="_blank" rel="noopener noreferrer" hidden>查看图片来源</a>
+</dialog>

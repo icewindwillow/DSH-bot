@@ -11,10 +11,10 @@
  *   - 不新增模型调用：事件全部复用现有管线（social judge / affinity tick / 兴趣词 / 冷落）
  *   - 数值只在这里出现，提示词里只有一句人话，且禁止她提「心情」「状态」这些词
  *   - 动态段必须放在 system prompt 最后（order 95），不破坏前缀缓存
- *   - 写入走文件锁 + 临时文件 + rename，和 people-store 同一套口径
+ *   - 写入走统一文档库事务
  *
  * 开关：QQBOT_MOOD=off 关闭；QQBOT_MOOD=dry 只记录不注入（观察用）
- * 文件：~/.dsh/profiles/qqbot/qqbot-mood.json
+ * 存储：SQLite mood（兼容旧 JSON）
  */
 function setupMood(ctx, bot, config, logger) {
     if (globalThis.__qqbotMood)
@@ -30,97 +30,43 @@ function setupMood(ctx, bot, config, logger) {
     const BASE = { valence: 68, energy: 55 };
     const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
     const round1 = (n) => Math.round(n * 10) / 10;
-    const profileDir = () => process.env.QQBOT_PROFILE_DIR ?? `${process.env.HOME ?? ''}/.dsh/profiles/qqbot`;
-    const file = () => `${profileDir()}/qqbot-mood.json`;
-
-    // ── 作息：20 岁大学生猫娘，早上困、下午懒、晚上精神 ──
+    const profileDir = () => process.env.QQBOT_PROFILE_DIR ?? `${process.env.DSH_HOME ?? `${process.env.HOME ?? ''}/.dsh`}/profiles/${process.env.QQBOT_PROFILE_NAME ?? 'qqbot'}`;
     const energyCurve = (hour) => {
-        if (hour <= 5)
-            return -16;
-        if (hour <= 8)
-            return -9;
-        if (hour <= 11)
-            return 5;
-        if (hour <= 14)
-            return -7;
-        if (hour <= 17)
-            return 2;
-        if (hour <= 21)
-            return 6;
+        if (hour <= 5) return -16;
+        if (hour <= 8) return -9;
+        if (hour <= 11) return 5;
+        if (hour <= 14) return -7;
+        if (hour <= 17) return 2;
+        if (hour <= 21) return 6;
         return 4;
     };
     const baseEnergy = (now) => clamp(BASE.energy + energyCurve(new Date(now).getHours()), 20, 90);
-    // 深夜心情也略低一点：困的时候不会那么雀跃（否则 1 点也会显示「满足」）
     const baseValence = (now) => {
         const hour = new Date(now).getHours();
-        const dip = hour <= 6 ? -8 : hour >= 23 ? -4 : 0;
-        return clamp(BASE.valence + dip, 0, 100);
+        return clamp(BASE.valence + (hour <= 6 ? -8 : hour >= 23 ? -4 : 0), 0, 100);
     };
 
     // ── 存储 ──
-    const emptyState = () => ({
-        version: 1,
-        global: { valence: BASE.valence, energy: BASE.energy, updatedAt: Date.now() },
-        groups: {},
-    });
+    const emptyState = () => ({ version: 1, global: { valence: BASE.valence, energy: BASE.energy, updatedAt: Date.now() }, groups: {} });
+    const normalize = (raw) => {
+        const state = raw && typeof raw === 'object' ? raw : emptyState();
+        state.groups = state.groups && typeof state.groups === 'object' ? state.groups : {};
+        state.global = state.global && typeof state.global === 'object' ? state.global : { ...BASE, updatedAt: Date.now() };
+        return state;
+    };
     const readState = () => {
-        try {
-            const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
-            if (!raw || typeof raw !== 'object')
-                return emptyState();
-            raw.groups = raw.groups && typeof raw.groups === 'object' ? raw.groups : {};
-            raw.global = raw.global && typeof raw.global === 'object' ? raw.global : { ...BASE, updatedAt: Date.now() };
-            return raw;
-        }
-        catch {
-            return emptyState();
-        }
+        try { return normalize(readProfileDocument(profileDir(), 'mood')); }
+        catch { return emptyState(); }
     };
     const withState = (mutator) => {
-        const target = file();
-        const lock = `${target}.lock`;
-        const deadline = Date.now() + 3000;
-        let fd;
-        for (;;) {
-            try {
-                fd = fs.openSync(lock, 'wx');
-                break;
-            }
-            catch (err) {
-                if (!err || err.code !== 'EEXIST')
-                    throw err;
-                try {
-                    if (Date.now() - fs.statSync(lock).mtimeMs > 8000)
-                        fs.unlinkSync(lock);
-                }
-                catch {
-                    // 已被别人清掉
-                }
-                if (Date.now() > deadline)
-                    throw new Error('qqbot-mood.json 写入锁超时');
-                try {
-                    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
-                }
-                catch {
-                    const end = Date.now() + 15;
-                    while (Date.now() < end) { /* spin */ }
-                }
-            }
-        }
-        try {
-            const state = readState();
-            const result = mutator(state);
-            if (result === false)
-                return { state, result: undefined, wrote: false };
-            const tmp = `${target}.tmp-${process.pid}`;
-            fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
-            fs.renameSync(tmp, target);
-            return { state, result, wrote: true };
-        }
-        finally {
-            try { fs.closeSync(fd); } catch { /* 忽略 */ }
-            try { fs.unlinkSync(lock); } catch { /* 忽略 */ }
-        }
+        let result;
+        let state;
+        withQqbotProfileDocuments(profileDir(), db => db.update('mood', current => {
+            state = normalize(current);
+            result = mutator(state);
+            return result === false ? undefined : state;
+        }));
+        return { state, result: result === false ? undefined : result, wrote: result !== false };
     };
 
     // ── 动力学 ──
@@ -182,6 +128,7 @@ function setupMood(ctx, bot, config, logger) {
         平静: { desc: '平平常常', behavior: '按平常的方式聊天就好。' },
         困倦: { desc: '有点困，反应慢半拍', behavior: '句子短一点，别长篇大论。' },
         烦躁: { desc: '有点烦，耐心不多', behavior: '语气短、不解释太多，但别凶人。' },
+        起床气: { desc: '为了上早课被闹钟叫起来，困得有点气鼓鼓', behavior: '可以短短地哼一声或吐槽闹钟。别对群友撒气，认真问题照常答。' },
         低落: { desc: '情绪不太高，话少', behavior: '能一句就一句，但别冷冰冰地拒绝别人。' },
         蔫蔫: { desc: '又累又没劲', behavior: '尽量短，能不说就不说，被问到再答。' },
     };
@@ -261,11 +208,21 @@ function setupMood(ctx, bot, config, logger) {
     const snapshot = (gid, now = Date.now()) => {
         const state = readState();
         const node = state.groups?.[gid];
-        if (!node)
+        const earlyRise = ENABLED && globalThis.__qqbotPersonaSleep?.scheduledMood?.(gid, now) === 'early-rise';
+        const meal = ENABLED && globalThis.__qqbotPersonaSleep?.scheduledMeal?.(gid, now);
+        const mealAffectsMood = Boolean(meal?.valence);
+        if (!node && !earlyRise && !mealAffectsMood)
             return undefined;
-        const copy = { ...node, events: Array.isArray(node.events) ? node.events : [] };
-        settle(copy, 3, now);
-        return { ...copy, label: labelOf(copy.valence, copy.energy) };
+        const copy = node
+            ? settle({ ...node, events: Array.isArray(node.events) ? node.events : [] }, 3, now)
+            : { valence: baseValence(now), energy: baseEnergy(now), updatedAt: now, lastSeenAt: 0, events: [] };
+        // The active calendar entry affects this view, so reads and restarts cannot pile up events.
+        if (earlyRise || mealAffectsMood) {
+            copy.valence = clamp(copy.valence - (earlyRise ? 26 : 0) + (meal?.valence ?? 0), 0, 100);
+            copy.energy = clamp(copy.energy - (earlyRise ? 10 : 0) + (meal?.energy ?? 0), 0, 100);
+        }
+        const label = earlyRise && copy.valence < 55 + Math.max(meal?.valence ?? 0, 0) ? '起床气' : labelOf(copy.valence, copy.energy);
+        return { ...copy, label, ...(mealAffectsMood ? { meal } : {}) };
     };
     const promptLine = (gid) => {
         if (!ENABLED || DRY || gid === undefined || gid === null)
@@ -276,8 +233,17 @@ function setupMood(ctx, bot, config, logger) {
             return '';
         const info = LABELS[snap.label] ?? LABELS.平静;
         const last = snap.events.slice(-1)[0];
-        const cause = last && now - Number(last.at ?? 0) < 30 * 60e3 && last.note ? `（${last.note}）` : '';
-        return `【你此刻的状态】${info.desc}${cause}。${info.behavior}这是你真实的状态，自然流露，不要说出口，也不要提「心情」「状态」这些词。`;
+        const cause = snap.label !== '起床气' && !snap.meal && last && now - Number(last.at ?? 0) < 30 * 60e3 && last.note ? `（${last.note}）` : '';
+        const mealReaction = snap.meal ? `这顿饭${snap.meal.reaction}。` : '';
+        const recentAttacks = snap.events.filter(({ at, type }) => (
+            at <= now && at > now - 30 * 60e3
+            && ['hostile_attack', 'harassment', 'crossing_line'].includes(type)
+        )).length;
+        const description = recentAttacks >= 2 ? '刚被连续呛了好几次，已经很烦，耐心快没了' : info.desc;
+        const behavior = recentAttacks >= 2
+            ? '对还在嘲讽、纠缠或逼你接活的人，说话可以很冲，冷脸、不客气，必要时尖刻地回嘴。碰到做不了的要求，当场短短拒绝，少用口癖，别说脏话。其他群友正常说话时照常接。'
+            : info.behavior;
+        return `【你此刻的状态】${description}${cause}。${mealReaction}${behavior}这是你真实的状态，自然流露，不要说出口，也不要提「心情」「状态」这些词。`;
     };
     /** 全局底色快照（碎碎念用：她自己的整体心情，不绑定某个群） */
     const globalSnapshot = (now = Date.now()) => {
@@ -368,7 +334,7 @@ function setupMood(ctx, bot, config, logger) {
 
     // ── 启动播种：给已知群建一份基线心情，第一轮就有状态可注入 ──
     try {
-        const cfg = JSON.parse(fs.readFileSync(`${profileDir()}/qqbot-groups.json`, 'utf8'));
+        const cfg = readProfileDocument(profileDir(), 'groups-config');
         const ids = new Set([
             ...(Array.isArray(cfg.noMention) ? cfg.noMention : []),
             ...Object.keys(cfg.prompts ?? {}),
@@ -460,6 +426,9 @@ function setupMood(ctx, bot, config, logger) {
         pulse,
         fromSocialEvent,
         promptLine,
+        wakeGreeting: gid => ENABLED && !DRY && snapshot(gid)?.label === '起床气'
+            ? '唔……刚被闹钟吵醒，还得去上早课。你找我呀？'
+            : undefined,
         wakeFactor,
         gateBias,
         stickerFactor,

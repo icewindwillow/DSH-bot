@@ -48,6 +48,20 @@ const PKG = join(PROFILE_DIR, 'node_modules', '@tencent-connect', 'dsh-qqbot', '
 /** 每条补丁：文件 + 片段名 + 锚点（行数组，按 \n 连接）+ 是否需要 node:fs 导入 */
 const PATCHES = [
   {
+    name: 'profile-document-gateway',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'profile-document-reader.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'profile-document-session',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'profile-document-reader.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'error-log',
     file: join(PKG, 'gateway', 'middleware-setup.js'),
     snippet: 'error-log.js',
@@ -510,6 +524,34 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'persona-sleep-register',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'persona-sleep-register.js',
+    anchor: ['    setupMiddlewares(bot, config, manager, logger);'],
+    needsFs: false,
+  },
+  {
+    name: 'persona-schedule-gateway-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'persona-schedule-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'persona-sleep-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'persona-sleep-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'task-queue-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'task-queue-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'reminders-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'reminders-helper.js',
@@ -743,6 +785,13 @@ const PATCHES = [
     anchor: [
       '                extraSections.push({ name: \'qqbot:mood\', order: 95, text: moodLine });',
     ],
+    needsFs: false,
+  },
+  {
+    name: 'persona-schedule-helper',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'persona-schedule-helper.js',
+    anchor: null,
     needsFs: false,
   },
   {

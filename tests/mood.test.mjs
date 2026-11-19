@@ -6,6 +6,7 @@
  * 用法：node tests/mood.test.mjs
  */
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { readProfileDocument, withQqbotProfileDocuments } from '../plugins/qqbot-core/profile-documents.js';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,8 @@ const strip = (p) => readFileSync(p, 'utf8')
 
 const timers = [];
 const sandbox = {
+    readProfileDocument,
+    withQqbotProfileDocuments,
     process,
     console: { log: () => {}, error: console.error },
     setTimeout,
@@ -117,6 +120,24 @@ console.log('mood: 提示词文案');
     ok('没消息的群不注入', mood.promptLine('G404') === '');
 }
 
+console.log('mood: 连续被怼');
+{
+    const mood = boot();
+    const gid = 'ATTACKS';
+    mood.fromSocialEvent('hostile_attack', 1, gid);
+    mood.fromSocialEvent('friendly_banter', 1, gid);
+    ok('一次攻击加善意互损不升级语气', !mood.promptLine(gid).includes('说话可以很冲'));
+    mood.fromSocialEvent('harassment', 1, gid);
+    const line = mood.promptLine(gid);
+    ok('连续被怼允许对施压者说话更冲', line.includes('说话可以很冲') && line.includes('当场短短拒绝'));
+    ok('不会迁怒其他群友或其他群', line.includes('其他群友正常说话时照常接') && !mood.promptLine('G1').includes('说话可以很冲'));
+    withQqbotProfileDocuments(PROFILE, db => db.update('mood', state => {
+        state.groups[gid].events[0].at -= 31 * 60e3;
+        return state;
+    }));
+    ok('旧攻击超出窗口后恢复通常口吻', !mood.promptLine(gid).includes('说话可以很冲'));
+}
+
 console.log('mood: 行为系数范围');
 {
     const mood = boot();
@@ -136,8 +157,8 @@ console.log('mood: 落盘与锁');
     const mood = boot();
     mood.pulse('G1', 2, 2, '测试落盘');
     const file = join(PROFILE, 'qqbot-mood.json');
-    ok('状态文件存在', existsSync(file));
-    const state = JSON.parse(readFileSync(file, 'utf8'));
+    ok('不新建旧状态文件', !existsSync(file));
+    const state = readProfileDocument(PROFILE, 'mood');
     ok('按群存储', Boolean(state.groups?.G1));
     ok('全局底色存在', typeof state.global?.valence === 'number');
     ok('没有残留锁文件', !existsSync(`${file}.lock`));

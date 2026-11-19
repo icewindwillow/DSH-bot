@@ -1,5 +1,11 @@
-import { initEventsPage, showEventsPage } from './pages/events.js';
 import { $, api, clone, esc, toast } from './shared/runtime.js';
+import { initEventsPage, showEventsPage } from './pages/events.js';
+import { initSchedulePage, showSchedulePage, hasScheduleDraft } from './pages/schedule.js';
+import { initAlbumPage, showAlbumPage } from './pages/album.js';
+import {
+  initMemoryImages, openMemoryImageUpload, previewMemoryImage,
+  readMemoryImageDraft, renderMemoryImages, saveMemoryImage,
+} from './shared/memory-images.js';
 import { applyPalette, initPalette } from './shared/palette.js';
 import { DAY_MS, dashboardDayStart } from './shared/dashboard-day.js';
 
@@ -854,30 +860,32 @@ $('btnAddTtsProvider').onclick = () => {
 updateTtsControls();
 void loadTtsSettings();
 // ── 语音合成设置结束 ──
+const PERSONA_TEMPLATE_PREFIX = 'template:';
+const isPersonaTemplate = (key) => key.startsWith(PERSONA_TEMPLATE_PREFIX);
+const isBasePersona = (key) => key === 'default' || key === '*';
+const fallbackPersonaKey = () => personas.personas?.['*'] ? '*' : 'default';
+const basePersonaName = (key) => entryName(key) || (key === 'default' ? '小易喵' : '旧版通配配置');
+
 function personaKeys() {
-  // 默认、通配、以及每个群（元数据里有名字），再补上数据里有但元数据缺的 key
-  const keys = ['default', '*'];
-  for (const g of OV.groups ?? []) keys.push(g.id);
-  for (const k of Object.keys(personas.personas ?? {})) if (!keys.includes(k)) keys.push(k);
-  return keys;
+  // Always keep the default slot; legacy wildcard entries only appear if actually configured.
+  return [...new Set(['default', ...(OV.groups ?? []).map(({ id }) => id), ...Object.keys(personas.personas ?? {})])];
 }
 
 function groupName(key) {
-  if (key === 'default') return '默认人格';
-  if (key === '*') return '通配（* 未单独配置的群）';
+  if (isBasePersona(key)) return basePersonaName(key);
   const g = (OV.groups ?? []).find((x) => x.id === key);
   return g?.name ?? '未知群';
 }
 
 function effectiveEntry(key) {
+  if (key === 'default' || key === '*') return personas.personas?.[key] ?? null;
   return personas.personas?.[key] ?? personas.personas?.['*'] ?? personas.personas?.default ?? null;
 }
 
 function inheritedFrom(key) {
   if (key === 'default' || key === '*') return null;   // 这两份是最底层，没有可继承的对象
   if (personas.personas?.[key]) return null;
-  if (personas.personas?.['*']) return '*';
-  return 'default';
+  return fallbackPersonaKey();
 }
 
 function entryModules(key) {
@@ -888,18 +896,42 @@ function entryModules(key) {
 
 function entryArchetype(key) {
   const entry = effectiveEntry(key);
-  return Array.isArray(entry) ? '' : (entry.archetype ?? '');
+  return Array.isArray(entry) ? '' : (entry?.archetype ?? '');
 }
 function entryName(key) {
   const entry = effectiveEntry(key);
   return Array.isArray(entry) ? '' : (typeof entry?.name === 'string' ? entry.name.trim() : '');
 }
 
-function setEntry(key, { modules, archetype, name } = {}) {
+function entryUsesSchedule(key) {
+  return effectiveEntry(key)?.useSchedule === true;
+}
+
+function setEntry(key, { modules, archetype, name, useSchedule, templateKey } = {}) {
   const current = personas.personas?.[key];
-  const currentName = Array.isArray(current) ? '' : (typeof current?.name === 'string' ? current.name : '');
+  const currentName = typeof current?.name === 'string' ? current.name : '';
   const nextName = name === undefined ? currentName : String(name).trim();
-  personas.personas[key] = { modules, ...(archetype ? { archetype } : {}), ...(nextName ? { name: nextName } : {}) };
+  const nextSchedule = useSchedule ?? (current?.useSchedule === true);
+  const entry = { modules, ...(archetype ? { archetype } : {}), ...(nextName ? { name: nextName } : {}),
+    ...(nextSchedule ? { useSchedule: true } : {}) };
+  personas.personas[key] = templateKey ? { ...entry, templateKey } : entry;
+  // Groups keep a full copy for the bot's existing group → wildcard → default lookup.
+  if (isPersonaTemplate(key)) {
+    for (const [gid, groupEntry] of Object.entries(personas.personas)) {
+      if (groupEntry?.templateKey === key) personas.personas[gid] = { ...entry, modules: modules.slice(), templateKey: key };
+    }
+  }
+  dirty.personas = true;
+}
+
+function applyPersonaToGroup(gid, source) {
+  const fallback = fallbackPersonaKey();
+  if (source === fallback || source === '*') {
+    delete personas.personas[gid];
+  } else {
+    setEntry(gid, { modules: entryModules(source), archetype: entryArchetype(source),
+      name: entryName(source), useSchedule: entryUsesSchedule(source), templateKey: isPersonaTemplate(source) ? source : undefined });
+  }
   dirty.personas = true;
 }
 
@@ -915,20 +947,26 @@ const PERSONA_MODULE_NAMES = {
 };
 function archetypeDisplay(id) { return PERSONA_ARCHETYPE_NAMES[id] ?? id; }
 function moduleDisplay(id) { return PERSONA_MODULE_NAMES[id] ?? id; }
-function personaSignature(key) { return JSON.stringify({ modules: entryModules(key), archetype: entryArchetype(key) }); }
+function personaSignature(key) { return JSON.stringify({ modules: entryModules(key), archetype: entryArchetype(key), useSchedule: entryUsesSchedule(key) }); }
 function personaProfiles() {
   const result = [];
   const bySignature = new Map();
-  for (const key of personaKeys()) {
+  const keys = personaKeys();
+  // Register standalone templates before their group copies, without merging them by content.
+  for (const key of [...keys.filter(isBasePersona), ...keys.filter(isPersonaTemplate), ...keys.filter((k) => !isBasePersona(k) && !isPersonaTemplate(k))]) {
     const own = Boolean(personas.personas?.[key]);
-    if (key !== 'default' && key !== '*' && !own) continue;
-    const signature = personaSignature(key);
+    if (key !== 'default' && !own) continue;
+    const templateKey = personas.personas?.[key]?.templateKey;
+    const signature = isPersonaTemplate(key) ? key
+      : typeof templateKey === 'string' && isPersonaTemplate(templateKey) && bySignature.has(templateKey) ? templateKey
+      : personaSignature(key);
     let profile = bySignature.get(signature);
     if (!profile) {
       const arch = entryArchetype(key);
       const first = entryModules(key)[0];
       const explicitName = entryName(key);
-      const name = explicitName || (key === 'default' ? '默认人格' : key === '*' ? '通用人格' : (arch ? archetypeDisplay(arch) : `${moduleDisplay(first || 'custom')}人格`));
+      const name = isBasePersona(key) ? basePersonaName(key)
+        : explicitName || (arch ? archetypeDisplay(arch) : `${moduleDisplay(first || 'custom')}人格`);
       profile = { sourceKey: key, name, memberKeys: [] };
       bySignature.set(signature, profile); result.push(profile);
     }
@@ -940,13 +978,16 @@ function personaProfiles() {
 function renderPersonaTab() {
   // 左侧显示人格，不再显示群组名称；每个条目保留一个真实数据源 key
   const profiles = personaProfiles();
+  const selectedProfile = profiles.find(({ memberKeys }) => memberKeys.includes(selectedKey)) ?? profiles[0];
+  selectedKey = selectedProfile.sourceKey;
+  $('btnNewPersona').disabled = false;
+  $('btnDeletePersona').disabled = isBasePersona(selectedKey);
+  $('btnDeletePersona').title = isBasePersona(selectedKey) ? '基础人格不可删除' : '';
   $('plist').innerHTML = profiles.map((profile) => {
     const key = profile.sourceKey;
-    const own = Boolean(personas.personas?.[key]);
-    const from = inheritedFrom(key);
-    const badge = own ? '<span class="badge own">已装备</span>' : `<span class="badge">继承 ${esc(from === '*' ? '通用' : '默认')}</span>`;
-    const users = profile.memberKeys.filter((x) => x !== 'default' && x !== '*').length;
-    const sub = users ? `${users} 个群组使用` : (key === '*' ? '未单独配置的群组' : '基础人格模板');
+    const badge = key === 'default' ? '<span class="badge own">默认</span>' : '<span class="badge own">已装备</span>';
+    const users = profile.memberKeys.filter((x) => !isBasePersona(x) && !isPersonaTemplate(x)).length;
+    const sub = users ? `${users} 个群组使用` : (key === '*' ? '未单独配置的群组' : isPersonaTemplate(key) ? '未分配群组' : '基础人格模板');
     return `<li data-key="${esc(key)}" class="${key === selectedKey ? 'active' : ''}">
       <span>${esc(profile.name)} <small class="id">${esc(sub)}</small></span><span>${badge}</span></li>`;
   }).join('');
@@ -958,17 +999,30 @@ function renderPersonaTab() {
   const key = selectedKey;
   const own = Boolean(personas.personas?.[key]);
   const from = inheritedFrom(key);
-  const isBase = key === 'default' || key === '*';
-  $('personaTitle').textContent = personaProfiles().find((profile) => profile.sourceKey === key)?.name ?? entryName(key) ?? (key === '*' ? '通用人格' : '默认人格');
+  const isBase = isBasePersona(key);
+  $('personaTitle').textContent = selectedProfile.name;
   $('personaHint').innerHTML = own
     ? '这份人格有独立内容，编辑后保存即生效。'
     : isBase
-      ? '还没有配置这份人格，点右上角「新建人格」从空模板开始。'
-      : (from ? `当前继承自「${from === '*' ? '通配' : '默认人格'}」；点「启用独立人格」才会为它单独存一份。` : '还没有任何人格数据。');
+      ? '还没有配置这份人格，点「配置此人格」开始。'
+      : (from ? `当前继承自「${esc(basePersonaName(from))}」；点「启用独立人格」才会为它单独存一份。` : '还没有任何人格数据。');
 
-  $('btnOwn').textContent = isBase ? '新建人格' : '启用独立人格';
+  $('btnOwn').textContent = isBase ? '配置此人格' : '启用独立人格';
   $('btnOwn').hidden = own;
-  $('btnInherit').hidden = !own || isBase;
+  $('btnInherit').hidden = !own || isBase || isPersonaTemplate(key);
+  const scheduleToggle = $('personaUseSchedule');
+  scheduleToggle.checked = entryUsesSchedule(key);
+  scheduleToggle.disabled = !own;
+  scheduleToggle.onchange = () => {
+    const members = isPersonaTemplate(key) ? [key] : selectedProfile.memberKeys;
+    for (const member of members) {
+      if (!personas.personas?.[member]) continue;
+      setEntry(member, { modules: entryModules(member), archetype: entryArchetype(member), useSchedule: scheduleToggle.checked });
+    }
+    // The changed combination may now coincide with another library entry.
+    selectedKey = personaProfiles().find(x => x.memberKeys.includes(key))?.sourceKey ?? key;
+    renderPersonaTab(); renderPersonaGroupConfig(); markPersonaDirty();
+  };
 
   // archetype
   const archetypes = Object.keys(personas.archetypes ?? {});
@@ -1011,7 +1065,7 @@ function renderPersonaTab() {
   $('btnAddModule').disabled = !own || allIds.length === 0;
 
   // 复制到
-  const targets = personaKeys().filter((k) => k !== key);
+  const targets = personaKeys().filter((k) => k !== key && !isPersonaTemplate(k));
   $('selCopyTo').innerHTML = targets.map((k) => `<option value="${esc(k)}">${esc(groupName(k))}</option>`).join('');
   $('btnCopy').disabled = !own || targets.length === 0;
 
@@ -1082,8 +1136,7 @@ function renderPersonaTab() {
   $('selArchetype').onchange = (e) => {
     if (!own) return;
     const mods = entryModules(key);
-    if (e.target.value) setEntry(key, { modules: mods, archetype: e.target.value });
-    else { personas.personas[key] = { modules: mods }; dirty.personas = true; }
+    setEntry(key, { modules: mods, archetype: e.target.value });
     renderPreview(key); markPersonaDirty();
   };
 
@@ -1091,11 +1144,11 @@ function renderPersonaTab() {
     const from = inheritedFrom(key);
     const list = entryModules(from ?? 'default');
     const arch = from ? entryArchetype(from) : '';
-    setEntry(key, { modules: list, archetype: arch });
+    setEntry(key, { modules: list, archetype: arch, useSchedule: from ? entryUsesSchedule(from) : undefined });
     renderPersonaTab(); markPersonaDirty();
   };
   $('btnInherit').onclick = () => {
-    if (!confirm('删掉这个群的独立人格，恢复继承默认？')) return;
+    if (!confirm(`移除此群的独立配置，恢复使用「${basePersonaName(fallbackPersonaKey())}」？`)) return;
     delete personas.personas[key];
     dirty.personas = true;
     renderPersonaTab(); markPersonaDirty();
@@ -1110,7 +1163,7 @@ function renderPersonaTab() {
     const target = $('selCopyTo').value;
     if (!target) return;
     if (!confirm(`把这个群的人格覆盖到「${groupName(target)}」？`)) return;
-    setEntry(target, { modules: entryModules(key), archetype: $('selArchetype').value });
+    setEntry(target, { modules: entryModules(key), archetype: $('selArchetype').value, useSchedule: entryUsesSchedule(key) });
     renderPersonaTab(); markPersonaDirty();
   };
   $('btnNewModule').onclick = () => {
@@ -1135,17 +1188,18 @@ function renderPersonaGroupConfig() {
   // 多个群可共用同一个人格选项；选项的值是代表群，而不一定是当前群。
   const profileKeyByMember = new Map(profiles.flatMap(({ sourceKey, memberKeys }) =>
     memberKeys.map((key) => [key, sourceKey])));
-  const fallback = personas.personas?.['*'] ? '*' : 'default';
+  const fallback = fallbackPersonaKey();
+  const fallbackName = basePersonaName(fallback);
   const options = profiles.map(({ sourceKey, name }) => `<option value="${esc(sourceKey)}">${esc(name)}</option>`).join('');
   const batch = $('personaBatchProfile');
   if (!batch) return;
   batch.innerHTML = `<option value="">选择人格模板…</option>${options}`;
-  $('personaFallback').value = fallback;
+  $('personaFallbackName').textContent = fallbackName;
   $('personaGroupList').innerHTML = groups.length ? groups.map((group) => {
     const own = Boolean(personas.personas?.[group.id]);
     return `<div class="group-row" data-group-id="${esc(group.id)}">
       <span class="group-avatar">${esc((group.name || group.id || '群').slice(0, 1))}</span>
-      <div class="group-info"><strong>${esc(group.name || group.id)}</strong><small>群 ${esc(String(group.id).slice(0, 8))}… · ${own ? '独立配置' : `继承${fallback === '*' ? '通配' : '默认'}`}</small></div>
+      <div class="group-info"><strong>${esc(group.name || group.id)}</strong><small>群 ${esc(String(group.id).slice(0, 8))}… · ${own ? '独立配置' : `继承${esc(fallbackName)}`}</small></div>
       <select data-group-persona="${esc(group.id)}">${options}</select>
       <div class="group-wake"><label>唤醒</label><input type="range" min="0" max="100" step="5" value="${OV.wakeIndex?.map?.[group.id] ?? OV.wakeIndex?.default ?? 100}" data-group-wake="${esc(group.id)}"><strong data-group-wake-value="${esc(group.id)}">${OV.wakeIndex?.map?.[group.id] ?? OV.wakeIndex?.default ?? 100}</strong></div>
     </div>`;
@@ -1155,12 +1209,7 @@ function renderPersonaGroupConfig() {
     select.onchange = () => {
       const gid = select.dataset.groupPersona;
       const source = select.value;
-      if (source === 'default' || source === '*') {
-        delete personas.personas[gid];
-      } else {
-        setEntry(gid, { modules: entryModules(source), archetype: entryArchetype(source), name: entryName(source) });
-      }
-      dirty.personas = true;
+      applyPersonaToGroup(gid, source);
       renderPersonaGroupConfig();
       markPersonaDirty();
     };
@@ -1173,22 +1222,9 @@ function renderPersonaGroupConfig() {
   batch.onchange = () => {
     const source = batch.value;
     if (!source) return;
-    for (const group of groups) {
-      if (source === 'default' || source === '*') delete personas.personas[group.id];
-      else setEntry(group.id, { modules: entryModules(source), archetype: entryArchetype(source), name: entryName(source) });
-    }
-    dirty.personas = true;
+    for (const group of groups) applyPersonaToGroup(group.id, source);
     renderPersonaGroupConfig();
     markPersonaDirty();
-  };
-  $('personaFallback').onchange = () => {
-    const source = $('personaFallback').value;
-    for (const group of groups) {
-      if (!personas.personas?.[group.id]) continue;
-      // 仅更新继承策略，不覆盖已经独立配置的群组。
-    }
-    if (source === '*' && !personas.personas?.['*']) toast('当前还没有通配人格，未配置群组仍会回落到默认人格。', 'err');
-    renderPersonaGroupConfig();
   };
 }
 
@@ -1197,7 +1233,7 @@ function savePersonaName(name) {
   if (!next) throw new Error('人格名称不能为空');
   const current = personas.personas?.[selectedKey];
   const source = inheritedFrom(selectedKey);
-  if (!current && source) setEntry(selectedKey, { modules: entryModules(source), archetype: entryArchetype(source), name: next });
+  if (!current && source) setEntry(selectedKey, { modules: entryModules(source), archetype: entryArchetype(source), name: next, useSchedule: entryUsesSchedule(source) });
   else if (Array.isArray(current)) setEntry(selectedKey, { modules: current, name: next });
   else setEntry(selectedKey, { modules: entryModules(selectedKey), archetype: entryArchetype(selectedKey), name: next });
 }
@@ -1217,7 +1253,10 @@ function setupPersonaViews() {
       document.querySelectorAll('[data-persona-view]').forEach((x) => x.classList.toggle('active', x === tab));
       $('personaViewEquip').classList.toggle('active', personaView === 'equip');
       $('personaViewGroups').classList.toggle('active', personaView === 'groups');
-      if (personaView === 'groups') renderPersonaGroupConfig();
+      if (personas) {
+        if (personaView === 'groups') renderPersonaGroupConfig();
+        else renderPersonaTab();
+      }
     };
   }
   $('btnSavePersonaTop').onclick = () => void savePersonas();
@@ -1235,10 +1274,23 @@ function setupPersonaViews() {
   $('personaNameInput').onkeydown = (event) => { if (event.key === 'Enter') $('btnPersonaNameConfirm').click(); if (event.key === 'Escape') closePersonaNameEditor(); };
   $('btnPersonaImport').onclick = () => toast('导入人格将在正式版接入 JSON 文件导入。', 'ok');
   $('btnNewPersona').onclick = () => {
+    const names = new Set(personaProfiles().map(({ name }) => name));
+    let name = '新人格';
+    for (let index = 2; names.has(name); index++) name = `新人格 ${index}`;
+    selectedKey = PERSONA_TEMPLATE_PREFIX + crypto.randomUUID();
+    setEntry(selectedKey, { modules: [], name });
+    renderPersonaTab(); renderPersonaGroupConfig(); markPersonaDirty();
+  };
+  $('btnDeletePersona').onclick = () => {
+    const profile = personaProfiles().find(({ sourceKey }) => sourceKey === selectedKey);
+    if (!profile || isBasePersona(profile.sourceKey)) return;
+    const groups = profile.memberKeys.filter((key) => !isPersonaTemplate(key) && !isBasePersona(key));
+    const impact = groups.length ? `\n保存后，使用它的 ${groups.length} 个群组将恢复使用「${basePersonaName(fallbackPersonaKey())}」。` : '';
+    if (!confirm(`确定删除「${profile.name}」？${impact}\n确认后仍需保存才会生效，共享模块不会被删除。`)) return;
+    for (const key of profile.memberKeys) delete personas.personas[key];
+    dirty.personas = true;
     selectedKey = 'default';
-    renderPersonaTab();
-    $('btnOwn').hidden = false;
-    $('btnOwn').click();
+    renderPersonaTab(); renderPersonaGroupConfig(); markPersonaDirty();
   };
 }
 
@@ -2874,6 +2926,11 @@ function renderMemoryWorkspace() {
     <h3>${esc(memoryTitle(item))}</h3><p class="muted">更新于 ${esc(new Date(item.updatedAt).toLocaleString())}</p>
     <section><h4>记忆正文</h4><p class="mem-body">${esc(item.text)}</p><div class="mem-meta">${item.tags.split(/\s+/).filter(Boolean).map((tag) => memoryChip(tag)).join('') || '<span class="muted">无标签</span>'}</div></section>
     <section>
+      <div class="mem-scope-head"><h4>关联图片</h4><button type="button" data-mem-action="upload">上传图片</button></div>
+      ${renderMemoryImages(item) || '<p class="muted">这条记忆还没有图片。</p>'}
+    </section>
+    <section><h4>分享阈值</h4><div class="mem-meta">${memoryChip(item.minAffinity ? `好感 ≥ ${item.minAffinity}` : '好感不限')}${memoryChip(item.minFamiliarity ? `熟悉 ≥ ${item.minFamiliarity}` : '熟悉不限')}</div></section>
+    <section>
       <div class="mem-scope-head"><h4>启用范围</h4><button type="button" data-mem-action="scope">编辑人格范围</button></div>
       ${legacy ? `<p class="muted">仍使用旧版范围，保存人格范围后才会替换。</p><div class="mem-meta">${item.groups.map((g) => memoryChip(memoryGroupLabel(g))).join('')}</div>` :
         item.personaIds.length ? `<div class="mem-meta">${item.personaIds.map((id) => memoryChip(memoryPersonaLabel(id))).join('')}</div>` : '<p class="muted">未选择人格组合，不参与召回。</p>'}</section>
@@ -2952,16 +3009,22 @@ function selectedMemory() {
   return memoriesState[mode].find((item) => item.id === selected[mode]);
 }
 
-function openMemoryEditor(item) {
+function openMemoryEditor(item, { fromAlbum = false } = {}) {
   const isAuto = memoriesState.mode === 'auto';
-  memoriesState.edit = { id: item?.id, mode: memoriesState.mode, gid: $('memAutoGid').value };
+  memoriesState.edit = { id: item?.id, mode: memoriesState.mode, gid: $('memAutoGid').value, fromAlbum };
   $('memEditorTitle').textContent = isAuto ? '编辑群内自动记忆' : item ? '编辑记忆' : '新增记忆';
   $('memTopicField').hidden = isAuto;
+  $('memShareField').hidden = isAuto;
+  $('memImageField').hidden = isAuto;
+  $('memImageFile').value = '';
+  $('memImageTags').value = '';
+  $('memMinAffinity').value = item?.minAffinity || '';
+  $('memMinFamiliarity').value = item?.minFamiliarity || '';
   $('memEditGroup').hidden = !isAuto;
   $('memEditGroup').textContent = isAuto ? `所属群：${memoryGroupLabel(memoriesState.edit.gid)} · 仅更新此群` : '';
   $('memTopic').value = item?.topic ?? '';
   $('memText').value = item?.text ?? '';
-  $('memTags').value = item?.tags ?? '';
+  $('memTags').value = item?.tags ?? (fromAlbum ? '自己的东西' : '');
   $('memPinned').checked = item?.pinned ?? false;
   $('memNewHint').hidden = !!item;
   $('memEditMsg').textContent = '';
@@ -2971,10 +3034,18 @@ function openMemoryEditor(item) {
 }
 
 function closeMemoryEditor(focusSelector) {
-  const focus = focusSelector ?? (memoriesState.edit?.id ? '[data-mem-action="edit"]' : '#btnMemAdd');
+  const edit = memoriesState.edit;
+  const focus = focusSelector ?? (edit?.id ? '[data-mem-action="edit"]' : '#btnMemAdd');
   memoriesState.edit = null;
   $('memEditor').hidden = true;
   $('memBrowse').hidden = false;
+  $('memImageFile').value = '';
+  if (edit?.refreshOnClose) void loadMemoryList(edit.mode);
+  if (edit?.fromAlbum && !$('paneMemories').hidden) {
+    switchTab('album');
+    $('albumAddMemory').focus();
+    return;
+  }
   document.querySelector(`#paneMemories ${focus}`)?.focus();
 }
 
@@ -2986,20 +3057,43 @@ async function saveMemory() {
   if (!text) { msg.dataset.error = ''; msg.textContent = '内容不能为空。'; return; }
   delete msg.dataset.error;
   const payload = { id: edit.id, topic: $('memTopic').value.trim(), text, tags: $('memTags').value.trim(), pinned: $('memPinned').checked };
-  const controls = ['btnMemSave', 'btnMemBack', 'btnMemCancel'].map($);
+  if (edit.fromAlbum && !payload.tags.split(/\s+/).includes('自己的东西')) {
+    payload.tags = ['自己的东西', payload.tags].filter(Boolean).join(' ');
+  }
+  const controls = ['btnMemSave', 'btnMemBack', 'btnMemCancel', 'memImageFile', 'memImageTags'].map($);
   controls.forEach((el) => { el.disabled = true; });
   msg.textContent = '保存中…';
+  const wasNew = !edit.id;
+  let memorySaved = false;
   try {
     const isAuto = edit.mode === 'auto';
+    const image = isAuto ? null : await readMemoryImageDraft($('memImageFile').files[0], $('memImageTags').value);
     if (isAuto) payload.gid = edit.gid;
+    else {
+      payload.minAffinity = Number($('memMinAffinity').value);
+      payload.minFamiliarity = Number($('memMinFamiliarity').value);
+    }
     const result = await api(isAuto ? '/api/memories' : '/api/memory-library', { method: edit.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-    memoriesState.selected[edit.mode] = edit.id ?? result.id;
-    if (!edit.id) { memoriesState.query.library = ''; $('memQuery').value = ''; }
+    memorySaved = true;
+    edit.id ??= result.id;
+    memoriesState.selected[edit.mode] = edit.id;
+    if (wasNew) { memoriesState.query.library = ''; $('memQuery').value = ''; }
+    if (image) {
+      msg.textContent = '记忆已保存，正在上传图片…';
+      edit.refreshOnClose = true;
+      await saveMemoryImage(edit.id, image);
+      edit.refreshOnClose = false;
+    }
     await loadMemoryList(edit.mode);
-    closeMemoryEditor(edit.id ? undefined : '[data-mem-action="scope"]');
-    toast('记忆已保存', 'ok');
+    closeMemoryEditor(wasNew ? '[data-mem-action="scope"]' : undefined);
+    toast(image ? '记忆和图片已保存' : '记忆已保存', 'ok');
   }
-  catch (err) { msg.dataset.error = ''; msg.textContent = `保存失败：${err.message}`; }
+  catch (err) {
+    msg.dataset.error = '';
+    msg.textContent = memorySaved || edit.refreshOnClose
+      ? `记忆已保存，图片上传失败。可重新选择图片或重试。${err.message}`
+      : `保存失败：${err.message}`;
+  }
   finally { controls.forEach((el) => { el.disabled = false; }); }
 }
 
@@ -3265,6 +3359,26 @@ $('tabSettings').onclick = () => switchTab('settings');
 $('btnSettingsOwners').onclick = () => openSettingsUtility('owners');
 $('btnSettingsTheme').onclick = () => openSettingsUtility('theme');
 $('tabPersona').onclick = () => switchTab('persona');
+$('tabSchedule').onclick = $('btnPersonaSchedule').onclick = () => switchTab('schedule');
+initSchedulePage();
+initMemoryImages();
+initAlbumPage();
+$('tabAlbum').onclick = () => switchTab('album');
+$('albumManageMemories').onclick = () => {
+  switchTab('memories');
+  if (!$('paneMemories').hidden && !memoriesState.edit) document.querySelector('[data-mem-mode="library"]').click();
+};
+$('albumAddMemory').onclick = () => {
+  switchTab('memories');
+  if ($('paneMemories').hidden) return;
+  if (memoriesState.edit) {
+    toast('请先保存或取消当前的记忆草稿。');
+    return;
+  }
+  memoriesState.mode = 'library';
+  $('memQuery').value = memoriesState.query.library;
+  openMemoryEditor(undefined, { fromAlbum: true });
+};
 $('tabMemories').onclick = () => switchTab('memories');
 $('tabInterest').onclick = () => switchTab('interest');
 $('btnIntSave').onclick = () => void saveInterestConfig();
@@ -3359,6 +3473,18 @@ $('memDetail').onclick = (e) => {
   const action = e.target.closest('[data-mem-action]')?.dataset.memAction;
   const item = selectedMemory();
   if (!item) return;
+  const image = e.target.closest('[data-memory-image]');
+  if (image) {
+    previewMemoryImage({ ...item, title: memoryTitle(item) }, image.dataset.memoryImage);
+    return;
+  }
+  if (action === 'upload') {
+    openMemoryImageUpload({ id: item.id, title: memoryTitle(item) }, async () => {
+      await loadMemoryList('library');
+      $('memDetail').querySelector('[data-mem-action="upload"]')?.focus();
+    });
+    return;
+  }
   if (action === 'edit') openMemoryEditor(item);
   if (action === 'scope') void openMemoryScope(item);
   if (action === 'delete') void deleteMemory(item);
@@ -3395,17 +3521,26 @@ function switchTab(which) {
   if (which === 'settings') setSettingsSection('modelKeys');
   else { $('paneModel').hidden = true; $('paneCredentials').hidden = true; }
   $('tabPersona').classList.toggle('active', which === 'persona');
+  $('tabSchedule').classList.toggle('active', which === 'schedule');
+  if (which === 'schedule') $('tabSchedule').setAttribute('aria-current', 'page');
+  else $('tabSchedule').removeAttribute('aria-current');
   $('tabPeople').classList.toggle('active', which === 'people');
   $('tabMemories').classList.toggle('active', which === 'memories');
   $('tabInterest').classList.toggle('active', which === 'interest');
   $('tabGallery').classList.toggle('active', which === 'gallery');
+  $('tabAlbum').classList.toggle('active', which === 'album');
+  if (which === 'album') $('tabAlbum').setAttribute('aria-current', 'page');
+  else $('tabAlbum').removeAttribute('aria-current');
   $('tabEvents').classList.toggle('active', which === 'events');
   if (which !== 'settings') $('paneModel').hidden = true;
   $('panePersona').hidden = which !== 'persona';
+  $('paneSchedule').hidden = which !== 'schedule';
+  if (which === 'schedule') showSchedulePage();
   $('panePeople').hidden = which !== 'people';
   $('paneMemories').hidden = which !== 'memories';
   $('paneInterest').hidden = which !== 'interest';
   $('paneGallery').hidden = which !== 'gallery';
+  $('paneAlbum').hidden = which !== 'album';
   $('paneEvents').hidden = which !== 'events';
   $('paneOwners').hidden = which !== 'owners';
   if (which === 'people' && !peopleLoaded) {
@@ -3418,6 +3553,7 @@ function switchTab(which) {
   }
   if (which === 'memories' && !memoriesState.edit) void loadMemoriesTab();
   if (which === 'events') void showEventsPage();
+  if (which === 'album') void showAlbumPage();
   if (which === 'gallery') {
     renderGalleryFilters();
     void loadGalleryAllow();
@@ -3474,11 +3610,12 @@ $('btnReload').onclick = () => {
   imageGenerationDirty = false;
   if (!$('paneCredentials').hidden) { void loadCredentials(); void loadImageGenerationSettings(); }
   else { imageGenerationLoaded = false; updateImageGenerationControls(); }
+  if (!$('paneAlbum').hidden) void showAlbumPage();
   load();
 };
 
 window.addEventListener('beforeunload', (e) => {
-  if (dirty.model || dirty.personas || dirty.owners || dirty.people || credentialsDirty || imageGenerationDirty) { e.preventDefault(); e.returnValue = ''; }
+  if (dirty.model || dirty.personas || dirty.owners || dirty.people || credentialsDirty || imageGenerationDirty || hasScheduleDraft()) { e.preventDefault(); e.returnValue = ''; }
 });
 
 function renderSettingsConcept() {
