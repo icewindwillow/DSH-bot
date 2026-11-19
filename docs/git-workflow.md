@@ -74,3 +74,31 @@ npm run check
 4. 维护者协调所有协作者后再选择合适的历史清理方案；重写历史和强制推送会影响他人的分支，不要由自动脚本擅自执行。
 
 本项目的默认发布流程不会复制生产 profile、收集本机历史，也不会自动重写远端 Git 历史。
+
+## 打包和发布正式版本
+
+先通过 PR 将版本变更合并到 `main`。版本号按 SemVer 递增，`package.json` 和 `package-lock.json` 必须同步。下面用 `0.2.1` 举例。可以在版本 PR 分支运行 `npm version 0.2.1 --no-git-tag-version` 更新两个文件。PR 合并并通过 CI 后，从对应的 `main` 提交推送带注释的版本标签。
+
+```bash
+git switch main
+git pull --ff-only
+git tag -a v0.2.1 -m "DSH-bot 0.2.1"
+git push origin refs/tags/v0.2.1
+```
+
+标签触发 GitHub Actions。在 macOS 和 Ubuntu 上通过 Node 24/25 的离线测试、公开文件检查和入口语法检查，且标签提交属于 `main`、版本一致时，工作流才会创建 GitHub Release。普通推送和 PR 运行 CI。版本发布提供 `dsh-bot-0.2.1.tar.gz` 和相应的 `.sha256` 文件。
+
+安装包从标签对应的 Git 提交生成，包含公开源码、依赖锁文件、示例配置、文档和测试。本机环境、未提交文件、运行数据库、个人相册和群聊档案应留在工作区外。已获准公开的宣传图与表情素材可作为文档资源入库。安装包仍需按部署指南配置 DSH、上游插件与独立 profile。
+
+可用同一脚本预览当前提交的包。下载正式包后，在这两个文件所在目录验证校验和，再解压并运行离线测试。macOS 可用 `shasum`，Linux 可用 `sha256sum -c`。
+
+```bash
+npm run package:release -- /tmp/dsh-bot-release
+shasum -a 256 -c dsh-bot-0.2.1.tar.gz.sha256
+tar -xzf dsh-bot-0.2.1.tar.gz
+cd dsh-bot-0.2.1
+npm ci --ignore-scripts
+npm test
+```
+
+如果打包任务因临时故障失败，可在 Actions 重跑失败的任务。若创建 Release 时留下草稿，先核对标签、草稿和已上传的附件，再补齐附件并发布。如果源码需要修正，提交修正后使用新版本标签。
