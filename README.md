@@ -1,4 +1,4 @@
-![小易喵 · qqbot。白发浅橘发尖的小易靠墙坐着，在膝上的画板画画，橘猫趴在她脚边。](docs/assets/xiaoyi-banner.webp)
+![小易喵 · qqbot。白发浅橘发尖的小易靠墙坐着，在膝上的画板画画，橘猫趴在她脚边。](docs/assets/xiaoyi-qqbot-cover.webp)
 
 # DSH-bot：有自己的性格，也知道什么时候别插话
 

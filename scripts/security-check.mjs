@@ -29,7 +29,7 @@ try {
     try { st = lstatSync(path); } catch { problems.push([name, 'Listed path is missing']); continue; }
     if (!st.isFile()) { problems.push([name, 'Only regular source files may be published']); continue; }
     if (st.size > 1024 * 1024) { problems.push([name, 'Unexpected file larger than 1 MiB']); continue; }
-    if (name === 'docs/assets/xiaoyi-banner.webp') {
+    if (name === 'docs/assets/xiaoyi-qqbot-cover.webp') {
       const image = readFileSync(path);
       // Only this illustrated README asset may be binary, with a single VP8 chunk and no metadata.
       if (image.length < 20 || image.toString('ascii', 0, 4) !== 'RIFF'
