@@ -23,6 +23,7 @@
     "patch:revert": "node scripts/patch.mjs --revert",
     "test": "node scripts/test-unit.mjs",
     "security:check": "node scripts/security-check.mjs",
+    "package:release": "node scripts/package-release.mjs",
     "check": "npm test && npm run security:check"
   }
 }

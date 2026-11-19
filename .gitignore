@@ -43,3 +43,9 @@
 **/media/
 **/images/
 **/cache/
+**/interest-gallery/
+**/generated-images/
+**/qqbot-media/
+**/memories/
+**/chat-log/
+**/.dsh/

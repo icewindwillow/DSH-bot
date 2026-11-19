@@ -7,7 +7,7 @@ import { ROOT } from './config.mjs';
 
 const allowedRoots = new Set(['.github', 'docs', 'examples', 'scripts', 'tests', 'qqbot-patches', 'bot-config-panel', 'plugins']);
 const allowedFiles = new Set(['lib/profile-documents.mjs', '.gitignore', '.gitattributes', 'package.json', 'package-lock.json', 'patch-qqbot.mjs', 'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE']);
-const allowedIllustrations = new Set(['docs/assets/xiaoyi-qqbot-cover.webp', 'docs/assets/xiaoyi-console.webp']);
+const allowedIllustrations = new Set(['docs/assets/xiaoyi-qqbot-cover.webp', 'docs/assets/xiaoyi-console.webp', 'docs/assets/xiaoyi-sticker.webp']);
 const rules = [
   ['OpenAI-style literal key', /\bsk-[A-Za-z0-9_-]{16,}\b/],
   ['GitHub access token', /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b/],
@@ -23,7 +23,7 @@ try {
   for (const name of names) {
     const top = name.split('/')[0];
     if (!allowedFiles.has(name) && !allowedRoots.has(top)) problems.push([name, 'Path is not on the publication allowlist']);
-    if (/\.(?:log|db|sqlite(?:3)?|jsonl|tgz)(?:$|[-.])|(?:^|\/)(?:\.env(?!\.example$)|\.bot-secrets\.json|\.control-token|who|sessions|node_modules|media|images|\.qqbot-patch-backups)(?:\/|$)|\.bak(?:-|$)/.test(name))
+    if (/\.(?:log|db|sqlite(?:3)?|jsonl|tgz)(?:$|[-.])|(?:^|\/)(?:\.env(?!\.example$)|\.bot-secrets\.json|\.control-token|who|sessions|node_modules|media|images|interest-gallery|generated-images|qqbot-media|memories|chat-log|\.dsh|\.qqbot-patch-backups)(?:\/|$)|\.bak(?:-|$)/.test(name))
       problems.push([name, 'Private/runtime artifact must never be committed']);
     const path = join(ROOT, name);
     let st;
@@ -32,11 +32,11 @@ try {
     if (st.size > 1024 * 1024) { problems.push([name, 'Unexpected file larger than 1 MiB']); continue; }
     if (allowedIllustrations.has(name)) {
       const image = readFileSync(path);
-      // A single VP8 chunk rules out extra metadata attached to the README illustrations.
+      // A single image chunk rules out extra metadata on the allowlisted illustrations.
       if (image.length < 20 || image.toString('ascii', 0, 4) !== 'RIFF'
-          || image.toString('ascii', 8, 16) !== 'WEBPVP8 ' || image.readUInt32LE(4) !== image.length - 8
+          || !['WEBPVP8 ', 'WEBPVP8L'].includes(image.toString('ascii', 8, 16)) || image.readUInt32LE(4) !== image.length - 8
           || 20 + image.readUInt32LE(16) + (image.readUInt32LE(16) % 2) !== image.length)
-        problems.push([name, 'README illustration must be a metadata-free VP8 WebP']);
+        problems.push([name, 'Illustration must be a metadata-free WebP']);
       continue;
     }
     const text = readFileSync(path, 'utf8');
