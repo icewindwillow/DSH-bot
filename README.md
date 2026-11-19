@@ -1,6 +1,8 @@
-![DSH-bot 鲸鱼主题封面](docs/assets/banner.svg)
+![白发浅橘发尖的小易在桌边画画，橘猫伸爪推她的彩铅](docs/assets/xiaoyi-banner.webp)
 
 # DSH-bot：有自己的性格，也知道什么时候别插话
+
+[快速开始](#快速开始) · [新版控制台](#新版控制台) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md)
 
 ## 关于小易
 
@@ -38,8 +40,6 @@
 ## 关于 DSH-bot
 
 **DSH-bot 是 DeepSeek Harness（DSH）的 QQ 群聊增强项目。** QQ 连接和基础会话由 DSH 与上游 `@tencent-connect/dsh-qqbot` 提供；这里负责群聊行为、记忆、控制台与部署工具。仓库不提供独立 QQ 宿主，也不托管模型。
-
-[快速开始](#快速开始) · [新版控制台](#新版控制台) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md)
 
 ## 在群里是什么样？
 

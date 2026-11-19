@@ -29,6 +29,15 @@ try {
     try { st = lstatSync(path); } catch { problems.push([name, 'Listed path is missing']); continue; }
     if (!st.isFile()) { problems.push([name, 'Only regular source files may be published']); continue; }
     if (st.size > 1024 * 1024) { problems.push([name, 'Unexpected file larger than 1 MiB']); continue; }
+    if (name === 'docs/assets/xiaoyi-banner.webp') {
+      const image = readFileSync(path);
+      // Only this illustrated README asset may be binary, with a single VP8 chunk and no metadata.
+      if (image.length < 20 || image.toString('ascii', 0, 4) !== 'RIFF'
+          || image.toString('ascii', 8, 16) !== 'WEBPVP8 ' || image.readUInt32LE(4) !== image.length - 8
+          || 20 + image.readUInt32LE(16) + (image.readUInt32LE(16) % 2) !== image.length)
+        problems.push([name, 'README illustration must be a metadata-free VP8 WebP']);
+      continue;
+    }
     const text = readFileSync(path, 'utf8');
     if (text.includes('\0')) problems.push([name, 'Binary artifact is not allowed in the source release']);
     // Explicit fake URL-auth cases exercise SSRF protection; do not exempt arbitrary test credentials.
