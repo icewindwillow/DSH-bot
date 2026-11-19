@@ -1,4 +1,6 @@
 /* >>> dsh-qqbot-patch:model-failover >>> */
-    // free 断联一次就切 opencode-go，后台探活可用后切回（失败兜底，不影响主流程）
-    setupModelFailover(ctx, config, logger);
+    // ── 入站：经过中间件链后的消息交给 dsh agent ──
+    // free 断联/限流后在本轮重新准备备用模型，后台探活可用后切回。
+    const readModelHealth = setupModelFailover(ctx, manager, logger);
+    globalThis.__qqbotModelHealth = readModelHealth;
 /* <<< dsh-qqbot-patch:model-failover <<< */
