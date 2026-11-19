@@ -2,7 +2,7 @@
 
 # DSH-bot：有自己的性格，也知道什么时候别插话
 
-[快速开始](#快速开始) · [新版控制台](#新版控制台) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md)
+[快速开始](#快速开始) · [新版控制台](#新版控制台) · [部署指南](docs/deployment.md) · [隐私说明](docs/privacy.md) · [版本下载](https://github.com/icewindwillow/DSH-bot/releases)
 
 ## 关于小易
 
