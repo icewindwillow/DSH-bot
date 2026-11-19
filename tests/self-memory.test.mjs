@@ -1,3 +1,5 @@
+import { readProfileDocument } from '../plugins/qqbot-core/profile-documents.js';
+import { beijingScheduleTime } from '../bot-config-panel/public/app/shared/persona-schedule.js';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,7 +24,7 @@ globalThis.fetch = async (_url, init) => {
 const snippet = readFileSync(join(ROOT, 'qqbot-patches', 'self-memory-helper.js'), 'utf8')
     .replace(/^\/\* >>>[^\n]*\n/, '')
     .replace(/\/\* <<<[^\n]*\n?$/, '');
-new Function(snippet)();
+new Function('readProfileDocument', 'beijingScheduleTime', snippet)(readProfileDocument, beijingScheduleTime);
 const memory = globalThis.__qqbotSelfMemory;
 
 let pass = 0;
@@ -119,6 +121,28 @@ await check('象信用的是 topic 列表，且带「都不是」兜底', async 
         throw new Error('选项没带全');
     if (!String(lastBody.questions.命中.instructions).includes('都不是'))
         throw new Error('缺少不相关兜底指令');
+});
+
+await check('按日期和餐别检索自己的餐食，重复记录保留原菜品', async () => {
+    const yesterday = Date.now() - 86400000;
+    const date = beijingScheduleTime(new Date(yesterday)).date;
+    const lunch = { date, label: '午饭', dish: '番茄炒蛋盖饭', reaction: '家常口味，吃饱就好' };
+    const dinner = { date, label: '晚饭', dish: '火锅', reaction: '特别开心' };
+    if (!memory.rememberMeal(lunch, yesterday - 3600000)
+        || !memory.rememberMeal(dinner, yesterday)
+        || !memory.rememberMeal({ ...lunch, dish: '红烧鱼' }, yesterday))
+        throw new Error('餐食记录失败');
+    lastBody = undefined;
+    await memory.prefetch('MEAL_TEST', '小易，你昨天中午吃了什么？');
+    const line = await memory.recallLine('MEAL_TEST');
+    if (!line.includes('番茄炒蛋盖饭') || /红烧鱼|火锅/.test(line) || lastBody)
+        throw new Error('餐食未按日期和餐别直接召回');
+    await memory.prefetch('MEAL_TEST', '小易，上次哪天吃的火锅？');
+    if (!(await memory.recallLine('MEAL_TEST')).includes(`${date} 晚饭`))
+        throw new Error('未召回上次的火锅');
+    await memory.prefetch('MEAL_TEST', '你今天早饭吃了什么？');
+    if (await memory.recallLine('MEAL_TEST'))
+        throw new Error('把上顿饭误当成今天早饭');
 });
 
 console.log(`\n${pass} 通过, ${fail} 失败`);

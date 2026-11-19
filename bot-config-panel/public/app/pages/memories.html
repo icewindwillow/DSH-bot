@@ -40,6 +40,20 @@
         <p id="memEditGroup" class="muted" hidden></p>
         <div class="field"><label for="memText">记忆正文</label><textarea id="memText" rows="5" maxlength="4000" required></textarea></div>
         <div class="field"><label for="memTags">标签 <span class="muted">（用空格分隔）</span></label><input type="text" id="memTags" maxlength="300"></div>
+        <fieldset id="memShareField" class="mem-module-list" aria-describedby="memShareHint">
+          <legend>分享阈值</legend>
+          <div class="grid">
+            <div class="field"><label for="memMinAffinity">最低好感</label><input id="memMinAffinity" type="number" min="0" max="100" step="1" placeholder="不限"></div>
+            <div class="field"><label for="memMinFamiliarity">最低熟悉</label><input id="memMinFamiliarity" type="number" min="0" max="100" step="1" placeholder="不限"></div>
+          </div>
+          <p class="hint" id="memShareHint">按小易当前回复的群友判定。取值 0–100，留空或填 0 为不限，设置的两项须同时达标。</p>
+        </fieldset>
+        <fieldset id="memImageField" class="mem-module-list" aria-describedby="memImageHint">
+          <legend>关联图片（可选）</legend>
+          <div class="field"><label for="memImageFile">选择图片</label><input id="memImageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></div>
+          <div class="field"><label for="memImageTags">图片标签</label><input id="memImageTags" type="text" maxlength="519" placeholder="例如 白猫 童年"></div>
+          <p class="hint" id="memImageHint">JPG、PNG、WebP、GIF，单张最大 8 MiB。标签用空格或逗号分隔。</p>
+        </fieldset>
         <label class="mem-check"><input type="checkbox" id="memPinned"> 置顶这条记忆</label>
         <p id="memNewHint" class="muted">新增的记忆默认未启用，保存后可在详情里设置启用范围。</p>
         <p id="memEditMsg" role="status"></p>

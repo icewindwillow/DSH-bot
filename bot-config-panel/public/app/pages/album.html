@@ -1,0 +1,32 @@
+<section class="pane" id="paneAlbum" hidden>
+  <div class="section-title-block">
+    <div>
+      <h1>小易的相册</h1>
+      <p>小易自己收藏的图片和她记得的东西。</p>
+    </div>
+    <button id="albumReload" type="button" class="small ghost">刷新</button>
+  </div>
+  <div class="album-tabs" role="tablist" aria-label="相册分类">
+    <button type="button" id="albumPhotosTab" role="tab" aria-controls="albumPhotos" aria-selected="true">收藏的图片</button>
+    <button type="button" id="albumMemoriesTab" role="tab" aria-controls="albumMemories" aria-selected="false" tabindex="-1">她记忆中自己的东西</button>
+  </div>
+  <section id="albumPhotos" role="tabpanel" aria-labelledby="albumPhotosTab">
+    <div class="album-toolbar">
+      <label>主题 <select id="albumTopic"><option value="">全部主题</option></select></label>
+      <p id="albumPhotoStatus" role="status"></p>
+    </div>
+    <div class="album-grid" id="albumPhotoGrid"></div>
+    <button id="albumMore" type="button" hidden>查看更多图片</button>
+  </section>
+  <section id="albumMemories" role="tabpanel" aria-labelledby="albumMemoriesTab" hidden>
+    <div class="album-toolbar">
+      <p>在手动记忆里加上「自己的东西」标签，就能收录到这里。</p>
+      <div class="album-toolbar-actions">
+        <button id="albumManageMemories" type="button" class="small ghost">管理私人记忆</button>
+        <button id="albumAddMemory" type="button" class="small primary">新增记忆</button>
+      </div>
+    </div>
+    <p id="albumMemoryStatus" role="status" hidden></p>
+    <div class="album-grid" id="albumMemoryGrid"></div>
+  </section>
+</section>

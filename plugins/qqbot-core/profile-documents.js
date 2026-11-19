@@ -114,6 +114,8 @@ export const profileDocumentTypes = Object.freeze({
     const type = `interest-${kind}-request`;
     return [type, Object.freeze({ legacyFile: `qqbot-${type}.json`, empty: () => null, consumable: true })];
   })),
+  'persona-schedule-calls': Object.freeze({ empty: () => ({ pending: [] }) }),
+  'persona-schedule': Object.freeze({ empty: () => ({ entries: [] }) }),
   personas: Object.freeze({ legacyFile: 'qqbot-personas.json', empty: () => ({ modules: {}, personas: {}, archetypes: {} }) }),
   'groups-config': Object.freeze({ legacyFile: 'qqbot-groups.json', empty: () => ({}) }),
   people: Object.freeze({ legacyFile: 'qqbot-people.json', checkLegacyFile: checkQqbotPermissionLegacyFile, empty: () => ({ people: [] }) }),

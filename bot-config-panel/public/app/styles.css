@@ -486,8 +486,9 @@ body[data-theme="blue"] button:hover{border-color:#AFC9DC}body[data-theme="purpl
   #panePersona .persona-card h2 { font-size:17px; margin:0; }
   #panePersona .persona-card h3 { font-size:12px; margin:0; }
   #panePersona .persona-card .sub { color:var(--muted); font-size:11px; margin-top:3px; }
-  #panePersona .persona-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .card-head, #panePersona .persona-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
   #panePersona .persona-list { display:grid; gap:5px; margin:14px 0 0; padding:0; list-style:none; }
+  #panePersona .persona-library-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
   #panePersona .persona-list li { padding:10px 9px; border-radius:11px; border:1px solid transparent; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12px; }
   #panePersona .persona-list li:hover, #panePersona .persona-list li.active { background:#E8F1F5; border-color:#C9DBE4; }
   #panePersona .persona-list li > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

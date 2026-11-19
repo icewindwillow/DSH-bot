@@ -6,7 +6,7 @@
         try {
             const msg = ctx?.message;
             if (msg?.kind === 'group' && msg.groupOpenid)
-                void globalThis.__qqbotSelfMemory?.prefetch?.(msg.groupOpenid, String(msg.content ?? ''));
+                void globalThis.__qqbotSelfMemory?.prefetch?.(msg.groupOpenid, String(msg.content ?? ''), String(msg.senderId ?? ''));
         }
         catch {
             // 预取失败不影响消息

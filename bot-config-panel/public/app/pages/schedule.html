@@ -1,0 +1,70 @@
+<section class="pane" id="paneSchedule" hidden>
+  <div class="section-title-block">
+    <div><div class="page-eyebrow">PERSONA SCHEDULE</div><h1>时间表</h1><p>小易的虚拟周表；只影响已启用人格的群聊回复。</p></div>
+    <button type="button" class="sc-help" id="btnScheduleHelp" aria-label="时间表说明">?</button>
+  </div>
+  <section class="card" aria-labelledby="scheduleCurrentTitle">
+    <div class="card-head">
+      <h2 id="scheduleCurrentTitle">北京时间 · 当前安排</h2><span id="schedulePublished" class="chip">读取中</span>
+    </div>
+    <p id="scheduleCurrent" role="status">正在读取周表…</p>
+    <details id="schedulePreview" hidden><summary>查看当前提示词（已保存）</summary><pre class="preview" id="schedulePrompt"></pre></details>
+  </section>
+  <section class="card" aria-labelledby="scheduleWeekTitle">
+    <div class="card-head schedule-toolbar">
+      <div><h2 id="scheduleWeekTitle">每周安排</h2><span class="sub">重叠的安排并排显示。点击空白添加，点击安排编辑。</span></div>
+      <div class="row">
+        <button type="button" class="small ghost" id="btnScheduleReload">重新读取</button>
+        <button type="button" class="small ghost" id="btnScheduleExamples" disabled>载入小易周表</button>
+        <button type="button" class="small" id="btnScheduleAdd" disabled>添加安排</button>
+        <button type="button" class="small primary" id="btnScheduleSave" disabled>保存时间表</button>
+      </div>
+    </div>
+    <p id="scheduleMessage" class="msg" role="status" hidden></p>
+    <label class="field schedule-day-picker" for="scheduleDay"><span>查看星期</span><select id="scheduleDay"></select></label>
+    <div id="scheduleCalendar" class="schedule-calendar" role="region" aria-label="北京时间每周时间表" tabindex="0" hidden>
+      <div id="scheduleGrid" class="schedule-grid"></div>
+    </div>
+  </section>
+
+  <section class="card" id="scheduleListCard" aria-labelledby="scheduleListTitle" hidden>
+    <div class="card-head">
+      <div><h2 id="scheduleListTitle">安排明细</h2><p class="hint">按北京时间列出当前草稿；重叠候选分别列出，概率只在空闲时判定；跨夜安排分两天显示。</p></div>
+      <label class="field" for="scheduleListDay"><span>筛选星期</span><select id="scheduleListDay"></select></label>
+    </div>
+    <div id="scheduleList"></div>
+  </section>
+
+  <dialog id="scheduleEditor" class="mem-dialog" aria-labelledby="scheduleEditorTitle">
+    <div class="mem-dialog-head"><h2 id="scheduleEditorTitle">添加安排</h2></div>
+    <form id="scheduleForm">
+      <fieldset class="mem-module-list"><legend>重复星期</legend><div class="row" id="scheduleDays"></div></fieldset>
+      <div class="grid schedule-times">
+        <label class="field" for="scheduleStart"><span>开始时间</span><input type="text" id="scheduleStart" aria-describedby="scheduleTimeHint" placeholder="08:00" maxlength="5" required></label>
+        <label class="field" for="scheduleEnd"><span>结束时间</span><input type="text" id="scheduleEnd" aria-describedby="scheduleTimeHint" placeholder="09:30" maxlength="5" required></label>
+      </div>
+      <p class="muted" id="scheduleTimeHint">使用 HH:MM。结束早于开始即跨到次日；结束可填 24:00。</p>
+      <label class="field" for="scheduleTitle"><span>安排名称</span><input type="text" id="scheduleTitle" maxlength="48" placeholder="例如：早八前犯困" required></label>
+      <div class="row">
+        <label class="field" for="scheduleProbability"><span>发生概率（%）</span><input type="number" id="scheduleProbability" min="0" max="100" step="1" required></label>
+        <label><input type="checkbox" id="scheduleSleep"> 睡眠</label>
+      </div>
+      <label class="field" for="scheduleMood"><span>情绪影响</span><select id="scheduleMood"><option value="">无</option><option value="early-rise">起床气</option></select></label>
+      <label class="field" for="scheduleMeal"><span>随机餐食</span><select id="scheduleMeal"><option value="">无</option><option value="breakfast">早饭</option><option value="lunch">午饭</option><option value="dinner">晚饭</option></select></label>
+      <label class="field" for="scheduleHint"><span>回话提示</span><textarea id="scheduleHint" maxlength="800" placeholder="例如：还在打哈欠，顺口来一句「哈欠～早……」" required></textarea></label>
+      <p id="scheduleEditorError" class="msg err" role="alert"></p>
+      <div class="mem-actions">
+        <button type="button" class="danger" id="btnScheduleDelete" hidden>删除安排</button>
+        <button type="button" class="ghost" id="btnScheduleCancel">取消</button>
+        <button type="submit" class="primary">应用到草稿</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="scheduleHelp" class="mem-dialog" aria-labelledby="scheduleHelpTitle">
+    <div class="mem-dialog-head"><h2 id="scheduleHelpTitle">关于时间表</h2></div>
+    <p>所有安排按北京时间每周重复。在「人格设定」启用后，空闲时才在安排开始点按概率抽签；已开始的安排会持续到结束。多个安排同一时刻通过抽签时，从通过的安排里随机选一个。</p>
+    <p>睡眠期间不接群聊；真正 @ 或叫到小易的人，会在醒来后收到原群里的一次 @ 提醒。示例和编辑都先进入草稿。保存后，已启用周表的人格才会使用这些安排。</p>
+    <p>小易的示例周表参考<a href="https://fzy.bift.edu.cn/jyjx/bkspy/index.htm" target="_blank" rel="noopener noreferrer">北京服装学院公开的本科培养课程</a>与<a href="https://fzys.dhu.edu.cn/9771/main.htm" target="_blank" rel="noopener noreferrer">东华大学服装与艺术设计学院 2026 年招生指南</a>，上课时间和生活安排都是虚构的。</p>
+    <form method="dialog" class="mem-actions"><button type="submit" autofocus>关闭</button></form>
+  </dialog>
+</section>

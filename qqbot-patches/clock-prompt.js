@@ -1,11 +1,17 @@
 /* >>> dsh-qqbot-patch:clock-prompt >>> */
                 extraSections.push({ name: 'qqbot:diary', order: 96, text: diaryLine });
-            // 当前时间：每轮重新计算，排在所有动态段最后，尽量不打断前缀缓存
-            const clockParts = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', {
-                timeZone: 'Asia/Shanghai', hour12: false,
-                year: 'numeric', month: '2-digit', day: '2-digit',
-                hour: '2-digit', minute: '2-digit', weekday: 'long',
-            }).formatToParts(new Date()).map((part) => [part.type, part.value]));
-            const clockLine = `当前时间：${clockParts.year}-${clockParts.month}-${clockParts.day} ${clockParts.hour}:${clockParts.minute}（北京时间，${clockParts.weekday}）。判断「今天、昨天、刚才、最近」等时间时以此为准。`;
-            extraSections.push({ name: 'qqbot:clock', order: 97, text: clockLine });
+            // 当前时间与周表共享同一快照；都留在动态上下文，不打断系统提示和对话历史的缓存。
+            const clockParts = beijingScheduleTime();
+            if (groupPrompt?.entry?.useSchedule === true) {
+                try {
+                    const week = validatePersonaSchedule(readProfileDocument(groupPrompt.profileDir, 'persona-schedule'));
+                    const text = personaSchedulePrompt(currentPersonaSchedule(week, clockParts), clockParts);
+                    if (text) extraSections.push({ name: 'qqbot:persona-schedule', order: 97, text });
+                }
+                catch {
+                    // 周表缺失或损坏时照常回复，仍提供时钟。
+                }
+            }
+            const clockLine = `当前时间：${clockParts.date} ${clockParts.hour}:${clockParts.minute}（北京时间，${clockParts.weekday}）。判断「今天、昨天、刚才、最近」等时间时以此为准。`;
+            extraSections.push({ name: 'qqbot:clock', order: 98, text: clockLine });
 /* <<< dsh-qqbot-patch:clock-prompt <<< */

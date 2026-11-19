@@ -3,7 +3,8 @@
             let selfMemoryText = '';
             if (record.scope === 'group') {
                 try {
-                    selfMemoryText = (await globalThis.__qqbotSelfMemory?.recallLine?.(record.peerId)) ?? '';
+                    const recipient = roleSkillReplySpeaker(record.peerId, record);
+                    selfMemoryText = (await globalThis.__qqbotSelfMemory?.recallLine?.(record.peerId, undefined, recipient?.id)) ?? '';
                 }
                 catch {
                     selfMemoryText = '';
