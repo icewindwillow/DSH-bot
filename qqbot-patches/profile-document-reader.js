@@ -313,6 +313,35 @@ export function openProfileDocuments(profile, { types = profileDocumentTypes, no
         return true;
       });
     },
+    importLegacyRecords(kind, bucket = '') {
+      const files = qqbotRecordFiles(kind, bucket);
+      return transaction(() => {
+        const at = now();
+        const marked = db.prepare('insert or ignore into record_bucket values(?,?)').run(kind, bucket);
+        const insert = db.prepare('insert into profile_record(kind,bucket,at,payload) values(?,?,?,?)');
+        const legacy = readQqbotLegacyRecords(profile, files, qqbotRecordCutoff(kind, at));
+        const existing = db.prepare('select payload from profile_record where kind=? and bucket=?').all(kind, bucket);
+        const seen = new Map();
+        for (const row of existing) seen.set(row.payload, (seen.get(row.payload) ?? 0) + 1);
+        let imported = 0;
+        for (const [entry, timestamp] of legacy) {
+          const payload = JSON.stringify(entry);
+          const count = seen.get(payload) ?? 0;
+          if (count > 0) {
+            seen.set(payload, count - 1);
+            continue;
+          }
+          insert.run(kind, bucket, qqbotRecordTime(entry, timestamp), payload);
+          imported++;
+        }
+        if (imported) log.run(`records:${kind}`, 'import', at);
+        return {
+          imported: Boolean(marked.changes || imported),
+          added: imported,
+          count: db.prepare('select count(*) as count from profile_record where kind=? and bucket=?').get(kind, bucket).count,
+        };
+      });
+    },
     read,
     appendRecord(kind, bucket, value) {
       const files = qqbotRecordFiles(kind, bucket);

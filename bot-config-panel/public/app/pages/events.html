@@ -1,13 +1,24 @@
 <section class="pane" id="paneEvents" hidden>
-    <div class="section-title-block"><div><div class="page-eyebrow">EVENT TRACKER</div><h1>事件追踪</h1><p>查看机器人和群组产生的运行事件。</p></div></div>
-    <div class="people-toolbar">
-      <div class="gchips" id="eventFilters"></div>
-      <div class="people-toolbar-actions">
-        <span class="msg" id="eventsStatus"></span>
-        <button class="small ghost" id="btnReloadEvents">刷新</button>
-      </div>
+  <div class="section-title-block event-page-heading">
+    <div>
+      <h1>事件追踪</h1>
+      <p>查看群聊里的待跟进事项、进展和结果。</p>
     </div>
-    <div class="people-layout" style="display:block">
-      <div id="eventList" class="rows"></div>
+    <button type="button" class="small ghost" id="btnReloadEvents">刷新</button>
+  </div>
+  <div class="event-toolbar">
+    <div id="eventFilters" class="event-filters" aria-label="按事件状态筛选"></div>
+    <div class="event-search">
+      <input type="search" id="eventQuery" aria-label="搜索事件" placeholder="搜索事项、人物或进展">
+      <select id="eventGroup" aria-label="按群聊筛选"><option value="">全部群聊</option></select>
     </div>
-  </section>
+  </div>
+  <p class="event-status" id="eventsStatus" role="status"></p>
+  <div class="event-workspace" id="eventsWorkspace">
+    <section class="event-index" aria-label="事件列表">
+      <div class="event-index-heading"><h2 id="eventIndexTitle">进行中</h2><span id="eventCount"></span></div>
+      <ul id="eventList" class="event-list"></ul>
+    </section>
+    <section class="event-detail" id="eventDetail" aria-label="事件详情"></section>
+  </div>
+</section>

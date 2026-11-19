@@ -20,11 +20,13 @@
 import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { openProfileDocuments, profileDocumentTypes } from '../lib/profile-documents.mjs';
+import { archiveObservedGroup, readObservedGroups } from './group-archive.mjs';
 import { mutateQqbotEvents, readProfileDocument, readQqbotGroupDirectory, readQqbotProfileDocument } from '../qqbot-patches/profile-document-reader.js';
 import { credentialStatus, updateCredentials } from './credentials.mjs';
 import { readImageGenerationSettings, writeImageGenerationSettings } from './image-generation.mjs';
 import { readTtsSettings, writeTtsSettings } from './tts.mjs';
 import { memoryPresentation } from './memory-presentation.mjs';
+import { DAY_MS, dashboardDayKey, dashboardDayStart } from './public/app/shared/dashboard-day.js';
 import {
   readFileSync, writeFileSync, copyFileSync, existsSync, statSync,
   openSync, closeSync, readSync, renameSync, readdirSync, chmodSync, unlinkSync, mkdirSync,
@@ -1077,7 +1079,8 @@ async function botControl(path, body, timeoutMs = 15000) {
 
 function dashboardData() {
   const now = Date.now();
-  const horizon = now - 7 * 86400000;
+  const todayStart = dashboardDayStart(now);
+  const horizon = todayStart - 6 * DAY_MS;
   const byDay = new Map();
   const groups24 = new Set();
   const lines = [];
@@ -1088,8 +1091,6 @@ function dashboardData() {
     try { const buf = Buffer.alloc(size); readSync(fd, buf, 0, size, Math.max(0, stat.size - size)); lines.push(...buf.toString('utf8').split('\n')); }
     finally { closeSync(fd); }
   } catch { /* no activity log yet */ }
-  let today = 0;
-  let triggeredToday = 0;
   let latestActivityTs = 0;
   for (const line of lines) {
     const m = line.match(/^(\S+)\s+(\S+)\s+event=GROUP_MESSAGE_CREATE\b([^\n]*)$/);
@@ -1098,19 +1099,19 @@ function dashboardData() {
     if (!Number.isFinite(ts) || ts < horizon || ts > now + 60000) continue;
     const gid = m[2];
     latestActivityTs = Math.max(latestActivityTs, ts);
-    const day = new Date(ts).toISOString().slice(0, 10);
-    const row = byDay.get(day) ?? { date: day, messages: 0, wake: 0 };
+    const dayStart = dashboardDayStart(ts);
+    const row = byDay.get(dayStart) ?? { messages: 0, wake: 0 };
     row.messages += 1;
     if (/\bwake=true\b/.test(m[3])) row.wake += 1;
-    byDay.set(day, row);
-    if (day === new Date(now).toISOString().slice(0, 10)) { today += 1; if (/\bwake=true\b/.test(m[3])) triggeredToday += 1; }
-    if (ts >= now - 86400000) groups24.add(gid);
+    byDay.set(dayStart, row);
+    if (ts >= now - DAY_MS) groups24.add(gid);
   }
   const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date(now - i * 86400000).toISOString().slice(0, 10);
-    days.push(byDay.get(date) ?? { date, messages: 0, wake: 0 });
+  for (let dayStart = horizon; dayStart <= todayStart; dayStart += DAY_MS) {
+    days.push({ date: dashboardDayKey(dayStart), ...(byDay.get(dayStart) ?? { messages: 0, wake: 0 }) });
   }
+  const { messages: today, wake: triggeredToday } = days.at(-1);
+  const activity24h = latestActivityTs >= now - DAY_MS;
   const modelStatus = readJsonFile(MODEL_STATUS, null);
   const running = botPids().length > 0;
   const modelUpdatedAt = modelStatus?.updatedAt ? Date.parse(modelStatus.updatedAt) : NaN;
@@ -1129,7 +1130,7 @@ function dashboardData() {
       warning: modelStatus?.ok === true && !modelFresh,
       detail: modelStatus?.ok === false ? `最近一次调用失败${modelStatus.lastError?.code ? ` · ${modelStatus.lastError.code}` : ''}` : (modelFresh ? '最近 10 分钟有状态上报' : '暂无新状态上报') },
     { id: 'storage', label: '本地存储', ok: storageReady, detail: storageReady ? '配置与事件可读' : '部分配置或事件不可读' },
-    { id: 'activity', label: '消息活动', ok: latestActivityTs >= now - 86400000, detail: today > 0 ? `今天已收到 ${today} 条消息` : '近 24 小时没有消息活动' },
+    { id: 'activity', label: '消息活动', ok: activity24h, detail: activity24h ? `今天已收到 ${today} 条消息` : '近 24 小时没有消息活动' },
   ];
   const score = Math.round(checks.reduce((sum, check) => sum + (check.ok ? 25 : check.warning ? 12 : 0), 0));
   const status = score >= 80 ? '状态良好' : score >= 60 ? '部分需要关注' : '存在异常';
@@ -1427,8 +1428,21 @@ const server = createServer((req, res) => {
       const changed = writeEventsStore((state) => {
         const target = state.events.find((event) => event && event.id === id);
         if (!target) return false;
+        if (target.status === status) return true;
+        if (target.closedAt && target.resultEvidence
+            && !target.history?.some(entry => entry.kind === 'close' && entry.at === target.closedAt)) {
+          target.history ??= [];
+          target.history.push({ kind: 'close', at: target.closedAt, status: target.status, reason: target.closeReason,
+            outcomeKind: target.outcomeKind, evidence: target.resultEvidence, person: target.resultPerson });
+        }
         target.status = status;
         target.closedAt = status === 'open' ? undefined : Date.now();
+        target.closeReason = status === 'open' ? undefined : 'manual';
+        target.outcomeKind = undefined;
+        target.resultEvidence = undefined;
+        target.resultMessageId = undefined;
+        target.resultPerson = undefined;
+        target.resultPersonId = undefined;
         return true;
       });
       return send(changed ? 200 : 404, changed ? { ok: true } : { ok: false, error: '没有这条事件' });
@@ -1910,8 +1924,32 @@ const server = createServer((req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/groups') {
-    try { return send(200, { ok: true, groups: readQqbotGroupDirectory(PROFILE_DIR), path: GROUPS_META }); }
-    catch { return send(500, { ok: false, error: '无法读取群列表' }); }
+    Promise.resolve().then(async () => {
+      const result = { ok: true, groups: readQqbotGroupDirectory(PROFILE_DIR), path: GROUPS_META };
+      if (url.searchParams.get('discover') === '1') {
+        const registered = new Set(result.groups.map(group => group.id));
+        const observed = await readObservedGroups(PROFILE_DIR);
+        result.discovered = [...observed.values()].reverse()
+          .filter(group => !registered.has(group.id))
+          .map(group => ({ id: group.id, observed: group.members.size }));
+      }
+      return send(200, result);
+    }).catch(() => send(500, { ok: false, error: '无法读取群列表' }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/groups/archive') {
+    readBody().then(async body => {
+      const id = typeof body?.groupOpenid === 'string' ? body.groupOpenid.trim() : '';
+      if (!/^[\w-]{1,128}$/.test(id)) return send(400, { ok: false, error: '群 OpenID 格式有误' });
+      const name = typeof body?.name === 'string' ? body.name.trim() : '';
+      try {
+        const result = await archiveObservedGroup(PROFILE_DIR, id, name);
+        return send(200, { ok: true, ...result, version: profileDocumentVersion(result.data) });
+      }
+      catch (error) { return send(error.status ?? 500, { ok: false, error: error.message }); }
+    }).catch(error => send(400, { ok: false, error: error.message }));
+    return;
   }
 
   if (req.method === 'PUT' && url.pathname === '/api/groups') {

@@ -1,5 +1,7 @@
+import { initEventsPage, showEventsPage } from './pages/events.js';
 import { $, api, clone, esc, toast } from './shared/runtime.js';
 import { applyPalette, initPalette } from './shared/palette.js';
+import { DAY_MS, dashboardDayStart } from './shared/dashboard-day.js';
 
 
 'use strict';
@@ -106,6 +108,26 @@ async function loadDashboard() {
     $('dashGroupsMeta').textContent = '真实日志暂不可用';
     $('dashRepliesMeta').textContent = '真实日志暂不可用';
   }
+}
+
+function startDashboardRefresh() {
+  let timer;
+  let loadedDay;
+  function refreshOnDayChange() {
+    const now = Date.now();
+    const day = dashboardDayStart(now);
+    if (day !== loadedDay) {
+      loadedDay = day;
+      void loadDashboard();
+    }
+    clearTimeout(timer);
+    timer = setTimeout(refreshOnDayChange, day + DAY_MS - now);
+  }
+  refreshOnDayChange();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshOnDayChange();
+  });
+  window.addEventListener('pageshow', refreshOnDayChange);
 }
 
 function renderAll() {
@@ -1426,6 +1448,7 @@ const P_PROFILE_FIELDS = [
 ];
 let peopleStore = { people: [] };
 let peopleGroups = [];
+let discoveredGroups = [];
 let peopleVersion;
 let peopleCurrent = -1;
 let peopleFilter = PEOPLE_ALL;
@@ -1545,14 +1568,18 @@ function loadPeopleData() {
 
 async function readPeopleData() {
   const [peopleRes, groupsRes] = await Promise.all([api('/api/people'), api('/api/groups'), loadPeopleModules()]);
-  peopleStore = peopleRes.data && Array.isArray(peopleRes.data.people) ? peopleRes.data : { people: [] };
-  peoplePersistedNames = new WeakMap(peopleStore.people.filter((person) => person && typeof person === 'object').map((person) => [person, pPersonName(person)]));
-  peopleVersion = peopleRes.version;
+  applyPeopleSnapshot(peopleRes);
   peopleGroups = Array.isArray(groupsRes.groups) ? groupsRes.groups : [];
   peopleLoaded = true;
   dirty.people = false;
   const visible = pFilteredIndexes();
   peopleCurrent = visible.length ? visible[0] : -1;
+}
+
+function applyPeopleSnapshot({ data, version }) {
+  peopleStore = data && Array.isArray(data.people) ? data : { people: [] };
+  peoplePersistedNames = new WeakMap(peopleStore.people.filter((person) => person && typeof person === 'object').map((person) => [person, pPersonName(person)]));
+  peopleVersion = version;
 }
 
 async function savePeople() {
@@ -1679,6 +1706,7 @@ function renderPeopleList() {
 function renderGroupManage() {
   const box = $('groupManageList');
   if (!box) return;
+  renderDiscoveredGroups();
   box.innerHTML = '';
   if (peopleGroups.length === 0) {
     box.append(pEl('p', { class: 'hint' }, '还没有群，先加一个。'));
@@ -1689,6 +1717,10 @@ function renderGroupManage() {
       pEl('strong', {}, group.name),
       pEl('span', { class: 'gid' }, group.id),
       pEl('span', { class: 'grow' }),
+      pEl('button', {
+        class: 'mini',
+        onclick: () => archivePeopleGroup(group.id),
+      }, '手动建档'),
       pEl('button', {
         class: 'mini',
         onclick: () => groupSessionAction(group, 'new'),
@@ -1734,6 +1766,84 @@ function renderGroupManage() {
   }
   box.append(pEl('p', { class: 'hint', style: 'margin:6px 0 0' },
     '「新会话」会清空该群当前上下文；长期记忆、档案、关系值不受影响。「压缩」保留摘要。'));
+}
+
+function renderDiscoveredGroups() {
+  const box = $('discoveredGroupList');
+  const unregistered = discoveredGroups.filter(group => !peopleGroups.some(known => known.id === group.id));
+  box.replaceChildren();
+  if (!unregistered.length) return;
+  box.append(pEl('p', { class: 'hint' }, '已收到消息、待登记的群'));
+  for (const group of unregistered) {
+    const name = pEl('input', { type: 'text', 'aria-label': `群 ${group.id} 的名称`, placeholder: '群名称（可选）' });
+    box.append(pEl('div', { class: 'gmrow' }, [
+      pEl('span', { class: 'gid' }, group.id),
+      pEl('span', {}, `已观察到 ${group.observed} 位发言者`),
+      pEl('span', { class: 'grow' }),
+      name,
+      pEl('button', { class: 'mini', onclick: () => archivePeopleGroup(group.id, name.value.trim()) }, '手动建档'),
+    ]));
+  }
+}
+
+async function openGroupManage() {
+  const status = $('groupArchiveStatus');
+  status.textContent = '';
+  discoveredGroups = [];
+  renderGroupManage();
+  $('groupManage').showModal();
+  try {
+    const result = await api('/api/groups?discover=1');
+    discoveredGroups = result.discovered ?? [];
+    renderDiscoveredGroups();
+  }
+  catch (error) {
+    if (!peopleSaving) status.textContent = `读取待登记群失败：${error.message}`;
+  }
+}
+
+async function archivePeopleGroup(id, name) {
+  if (peopleSaving || peopleLoading) return;
+  const status = $('groupArchiveStatus');
+  if (dirty.people) {
+    status.textContent = '请先关闭群管理并保存成员档案，再手动建档。';
+    return;
+  }
+  peopleSaving = true;
+  const controls = ['groupManageAddRow', 'groupManageList', 'discoveredGroupList'].map($);
+  for (const control of controls) control.inert = true;
+  $('btnCloseGroupManage').disabled = true;
+  status.textContent = '正在根据群消息建档…';
+  try {
+    const res = await api('/api/groups/archive', {
+      method: 'POST',
+      body: JSON.stringify({ groupOpenid: id, name }),
+    });
+    applyPeopleSnapshot(res);
+    peopleGroups = res.groups;
+    peopleFilter = id;
+    peopleCurrent = pFilteredIndexes()[0] ?? -1;
+    if (OV) {
+      OV.groups = peopleGroups.map(group => ({ id: group.id, name: group.name }));
+      OV.people = peopleStore.people.map(person => ({ name: person.name, openids: person.openids ?? [], groups: pGroupsOf(person) }));
+      renderPersonaTab();
+      renderOwners();
+    }
+    renderPeopleTab();
+    const summary = res.observed
+      ? `已观察 ${res.observed} 人，新建 ${res.created} 份成员档案，补绑 ${res.linked} 人`
+      : '暂无可用于建档的群消息';
+    status.textContent = `「${res.group.name}」${res.groupCreated ? '已登记，' : '：'}${summary}。`;
+    pSetStatus(status.textContent, 'ok');
+  }
+  catch (error) {
+    status.textContent = `建档失败：${error.message}`;
+  }
+  finally {
+    peopleSaving = false;
+    for (const control of controls) control.inert = false;
+    $('btnCloseGroupManage').disabled = false;
+  }
 }
 
 async function groupSessionAction(group, action) {
@@ -2344,73 +2454,6 @@ async function loadPersonMemories(person, box, preview = false) {
   }
 }
 
-let eventsLoaded = false;
-let eventFilter = 'open';
-
-async function loadEvents() {
-  try {
-    const res = await api('/api/events');
-    eventsLoaded = true;
-    renderEvents(Array.isArray(res.events) ? res.events : []);
-    const status = $('eventsStatus');
-    if (status) status.textContent = `共 ${(res.events ?? []).length} 条`;
-  }
-  catch (err) {
-    toast(`读取事件失败：${err.message}`, 'err');
-  }
-}
-
-async function updateEvent(id, status) {
-  try {
-    await api('/api/events/update', { method: 'POST', body: JSON.stringify({ id, status }) });
-    await loadEvents();
-  }
-  catch (err) {
-    toast(`更新事件失败：${err.message}`, 'err');
-  }
-}
-
-function renderEvents(list) {
-  const box = $('eventList');
-  if (!box) return;
-  box.innerHTML = '';
-  const filters = [['open', '进行中'], ['done', '已完成'], ['dropped', '已放弃'], ['all', '全部']];
-  const chips = $('eventFilters');
-  chips.innerHTML = '';
-  for (const [key, label] of filters) {
-    const count = key === 'all' ? list.length : list.filter((e) => e.status === key).length;
-    chips.append(pEl('button', {
-      class: `gchip ${eventFilter === key ? 'active' : ''}`,
-      onclick: () => { eventFilter = key; renderEvents(list); },
-    }, [label, pEl('span', { class: 'n' }, String(count))]));
-  }
-  const visible = (eventFilter === 'all' ? list : list.filter((e) => e.status === eventFilter))
-    .slice().sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
-  if (visible.length === 0) {
-    box.append(pEl('div', { class: 'empty' }, eventFilter === 'open' ? '没有进行中的事件' : '没有事件'));
-    return;
-  }
-  for (const e of visible) {
-    const isPlan = e.type === 'plan';
-    const when = new Date(Number(e.createdAt)).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const actions = [];
-    if (e.status === 'open') {
-      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'done') }, '完成'));
-      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'dropped') }, '放弃'));
-    }
-    else {
-      actions.push(pEl('button', { class: 'small ghost', onclick: () => updateEvent(e.id, 'open') }, '重开'));
-    }
-    box.append(pEl('div', { class: 'row', style: 'align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(127,142,163,.15)' }, [
-      pEl('span', { style: 'flex:0 0 92px;font-size:12px;color:var(--muted)' }, String(e.person ?? '')),
-      pEl('span', { style: 'flex:0 0 64px;font-size:12px' }, isPlan ? (e.kind === 'long' ? '长期' : '短期') : `情绪·${e.emotion ?? ''}`),
-      pEl('span', { style: 'flex:1;font-size:13px' }, `${e.title ?? ''}${e.dueAt ? `（${e.dueAt}）` : ''}`),
-      pEl('span', { style: 'flex:0 0 150px;font-size:11px;color:var(--muted)' }, `${when} · 问过 ${e.askedCount ?? 0} 次`),
-      pEl('span', { style: 'flex:0 0 auto;display:flex;gap:6px' }, actions),
-    ]));
-  }
-}
-
 function pDuplicatePerson() {
   const person = peopleStore.people[peopleCurrent];
   if (!person) return;
@@ -2672,7 +2715,7 @@ function scheduleGallery() {
 
 $('tabGallery').onclick = () => switchTab('gallery');
 $('tabEvents').onclick = () => switchTab('events');
-$('btnReloadEvents').onclick = () => loadEvents();
+initEventsPage();
 $('galleryAllowEdit').onclick = openAllowEditor;
 $('allowSearch').addEventListener('input', renderAllowList);
 $('allowSave').onclick = saveAllowEditor;
@@ -2722,7 +2765,8 @@ $('btnAddPerson').onclick = pAddPerson;
 $('btnDupPerson').onclick = pDuplicatePerson;
 $('btnReloadPeople').onclick = reloadPeopleArchive;
 $('btnSavePeople').onclick = savePeople;
-$('btnGroupManage').onclick = () => { renderGroupManage(); $('groupManage').showModal(); };
+$('btnGroupManage').onclick = openGroupManage;
+$('groupManage').addEventListener('cancel', event => { if (peopleSaving) event.preventDefault(); });
 $('btnCloseGroupManage').onclick = () => $('groupManage').close();
 $('btnAddGroup').onclick = addPeopleGroup;
 
@@ -3373,7 +3417,7 @@ function switchTab(which) {
     });
   }
   if (which === 'memories' && !memoriesState.edit) void loadMemoriesTab();
-  if (which === 'events') void loadEvents();
+  if (which === 'events') void showEventsPage();
   if (which === 'gallery') {
     renderGalleryFilters();
     void loadGalleryAllow();
@@ -3634,7 +3678,7 @@ function initHomeDisplayName() {
 }
 initPalette();
 load();
-void loadDashboard();
+startDashboardRefresh();
 $('btnHealthRefresh').onclick = () => void loadDashboard();
 initHomeDisplayName();
 switchTab('home');
