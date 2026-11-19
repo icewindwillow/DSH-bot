@@ -1,10 +1,10 @@
 /* >>> dsh-qqbot-patch:silent-reply >>> */
     async send(record, text, tag) {
         const silentProbe = String(text ?? '').trim();
-        // 模型判断「这条不该接」时只回 [SILENT]，此处吞掉，不发给用户。
-        // 必须容忍大小写和方括号/全角括号写法：2026-10-27 那次模型写的是小写
-        // `[silent]`，旧判断只认大写，于是把后面 30 万字一起发进了群。
-        if (/^[\[【(（]{1,2}\s*silent\s*[\]】)）]{1,2}/i.test(silentProbe)) {
+        // 括号里的控制标记可带尾随文本。无括号时只拦整条都是标记的回复。
+        const bracketedMarker = /^[\[【(（]{1,2}\s*(?:silent|静默|沉默)\s*[\]】)）]{1,2}/i;
+        const bareMarker = /^(?:silent|静默|沉默)[\s。．.!！?？~～…]*$/i;
+        if (bracketedMarker.test(silentProbe) || bareMarker.test(silentProbe)) {
             this.logger.debug?.('im-qqbot: 模型选择不接话（[SILENT]），跳过发送');
             return;
         }
