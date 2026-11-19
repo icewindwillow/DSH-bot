@@ -146,6 +146,8 @@ npm run panel
 | `QQBOT_WORKDIR` | `<profile>/workspace` | 私有目录，不可位于本 Git 仓库内 |
 | `QQBOT_DIARY` | `off` | 日记需主动开启 |
 | `QQBOT_DIARY_PUBLISH` | 非 `on` 不发布 | 即便本地日记开启，对外发布还要显式 `on` |
+| `QQBOT_VISION_PREFLIGHT` | 默认关闭 | 设为 `on` 后，使用已配置的视觉模型读取下载的图片和引用截图 |
+| `QQBOT_COMPLEX_WORK` | 默认关闭 | 在支持工具守卫的宿主上设为 `on` 后，涉及写文件与执行命令的登记按当前 QQ 消息绑定并计数 |
 | `QQBOT_DIARY_GUILD` / `QQBOT_DIARY_CHANNEL` | 无目标，不发布 | 需主动配置获授权的频道/子频道 ID |
 | `QQBOT_VECTOR` | `off` | 本地向量模型及索引需另行验证 |
 | `QQBOT_IMAGE_GENERATION` | `off` 额外禁止；`on` 不会越过 JSON 关闭状态 | 生图仍需独立 `enabled:true`、可用 Key 与当前明确请求；不是金额预算 |
