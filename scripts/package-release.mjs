@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT } from './config.mjs';
 
@@ -27,12 +27,12 @@ try {
   const output = resolve(directory);
   const root = 'dsh-bot-' + version;
   const name = root + '.tar.gz';
-  const archive = execFileSync('git', ['archive', '--format=tar.gz', '--prefix=' + root + '/', commit], { cwd: ROOT });
-  const digest = createHash('sha256').update(archive).digest('hex');
+  const archive = join(output, name);
   mkdirSync(output, { recursive: true });
-  writeFileSync(join(output, name), archive);
+  git('archive', '--format=tar.gz', '--prefix=' + root + '/', '--output=' + archive, commit);
+  const digest = createHash('sha256').update(readFileSync(archive)).digest('hex');
   writeFileSync(join(output, name + '.sha256'), digest + '  ' + name + '\n');
-  console.log('Packaged ' + commit + ' as ' + join(output, name));
+  console.log('Packaged ' + commit + ' as ' + archive);
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

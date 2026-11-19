@@ -25,11 +25,13 @@
     </div>
     <dialog class="people-dialog wide group-manage" id="groupManage" aria-labelledby="groupManageTitle">
       <h2 id="groupManageTitle">群管理 / 会话</h2>
-      <div class="row">
+      <div class="row" id="groupManageAddRow">
         <input type="text" id="newGroupId" aria-label="群 OpenID" placeholder="群 OpenID" />
         <input type="text" id="newGroupName" aria-label="群名称" placeholder="输入群名称" />
         <button class="small" id="btnAddGroup">＋ 加群</button>
       </div>
+      <div class="msg" id="groupArchiveStatus" role="status"></div>
+      <div id="discoveredGroupList"></div>
       <div id="groupManageList"></div>
       <div class="people-dialog-actions"><button id="btnCloseGroupManage">关闭</button></div>
     </dialog>

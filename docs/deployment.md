@@ -149,6 +149,8 @@ Linux/Windows 如需进程管理，请自行验证并在贡献中说明测试范
 
 升级前：停止机器人，离线备份 profile、记忆数据库、媒体、事件与关系状态，并记录精确上游版本。数据库备份需考虑 WAL/一致性，不能只在运行中随手复制一个 SQLite 主文件。
 
+旧 profile 如保留了 JSON 档案或 JSONL 记录，可在停机备份后运行 `node scripts/migrate-profile-json-to-sqlite.mjs /绝对路径/到/profile`。脚本按现有保留期限补导入已支持的数据，保留原始文件，并列出不识别的旧文件。输出仅用于本机核对。
+
 升级后：重新 `doctor → patch:plan → patch → patch:check → npm test`，最后再真实验收。插件重装可能覆盖补丁安装产物，需要重打。跨版本锚点不匹配时应停止升级，不能忽略错误。
 
 恢复当前部署原件可使用：
