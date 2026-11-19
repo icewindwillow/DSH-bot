@@ -35,7 +35,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmdirS
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -349,6 +349,13 @@ const PATCHES = [
     needsFs: false,
   },
   {
+    name: 'person-state-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'person-state-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
     name: 'memory-summary-helper',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'memory-summary-helper.js',
@@ -644,6 +651,15 @@ const PATCHES = [
     snippet: 'people-roster-helper.js',
     anchor: null,
     needsFs: true,
+  },
+  {
+    name: 'event-speaker-context',
+    file: join(PKG, 'session', 'session-manager.js'),
+    snippet: 'event-speaker-context.js',
+    anchor: [
+      "        const eventLine = globalThis.__qqbotEvents?.promptLine?.(gid, name);",
+    ],
+    needsFs: false,
   },
   {
     name: 'role-skills-helper',
@@ -1007,6 +1023,20 @@ const PATCHES = [
     ],
     needsFs: false,
   },
+  {
+    name: 'model-failover-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'model-failover-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'model-failover',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'model-failover.js',
+    anchor: ['    // ── 入站：经过中间件链后的消息交给 dsh agent ──'],
+    needsFs: false,
+  },
 ];
 
 // Deployment never copies skills, seeds JSON, or touches credentials. Initialize those separately.
@@ -1019,7 +1049,38 @@ const BACKUPS = join(PROFILE_DIR, '.qqbot-patch-backups');
 const LOCK = join(PROFILE_DIR, '.qqbot-patch.lock');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const count = (source, token) => source.split(token).length - 1;
-const selected = onlyNames ? PATCHES.filter((patch) => onlyNames.includes(patch.name)) : PATCHES;
+const agentLoop = process.env.QQBOT_AGENT_LOOP_FILE;
+const modelFailoverRuntime = agentLoop ? [
+  {
+    name: 'model-failover-step-model',
+    anchor: [
+      '\t\tconst claimed = this.inbox.claim(target, position.turn);',
+      '\t\tconst selection = this.model.current();',
+    ],
+  },
+  {
+    name: 'model-failover-reprepare',
+    anchor: [
+      '\t\t\t\t\tif (action?.kind !== "retry") throw new LlmError(finish.failure.message, finish.failure.code, finish.failure);',
+      '\t\t\t\t\tcontinue;',
+    ],
+  },
+  {
+    name: 'model-failover-continue-turn',
+    anchor: ['\t\t\t\t\t\tif (turnEnds === null || turnEnds.kind !== "max-tokens") turnEnds = stepEnd;'],
+  },
+  {
+    name: 'model-failover-preserve-selection',
+    anchor: [
+      '\t\t\tconst request = this.buildRequest(config, preparedCall, assembly.tools, {',
+      '\t\t\t\tturn,',
+      '\t\t\t\tstep',
+      '\t\t\t}, startsRequestSeries, signal);',
+    ],
+  },
+].map((patch) => ({ ...patch, file: agentLoop, snippet: `${patch.name}.js`, needsFs: false })) : [];
+const registered = [...PATCHES, ...modelFailoverRuntime];
+const selected = onlyNames ? registered.filter((patch) => onlyNames.includes(patch.name)) : registered;
 
 function atomicWrite(file, bytes, mode = 0o600) {
   const tmp = `${file}.qqbot-tmp-${randomUUID()}`;
@@ -1212,6 +1273,7 @@ function apply(entries) {
 }
 function revert() {
   if (onlyNames) throw new Error('--revert does not support --only: restoration is by whole deployment transaction');
+  if (mode !== 'revert' && agentLoop && !isAbsolute(agentLoop)) throw new Error('QQBOT_AGENT_LOOP_FILE must be absolute');
   if (backupArg !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(backupArg) || ['.', '..'].includes(backupArg))) throw new Error('invalid backup id');
   if (!existsSync(BACKUPS)) throw new Error('no deployment backup; reinstall the exact upstream version for legacy patches');
   const candidates = readdirSync(BACKUPS).filter((id) => /^[A-Za-z0-9.-]+$/.test(id)).sort().reverse();
@@ -1281,7 +1343,8 @@ try {
   if (['--check', '--revert', '--plan'].filter((flag) => argv.includes(flag)).length > 1) throw new Error('--check, --revert and --plan are mutually exclusive');
   if (argv.some((arg) => !['--check', '--revert', '--plan'].includes(arg) && !arg.startsWith('--only=') && !arg.startsWith('--backup='))) throw new Error('unknown argument');
   if (argv.filter((a) => a.startsWith('--only=')).length > 1 || argv.filter((a) => a.startsWith('--backup=')).length > 1) throw new Error('duplicate option');
-  if (onlyNames && onlyNames.some((name) => !PATCHES.some((p) => p.name === name))) throw new Error('--only requires registered nonempty patch names');
+  if (onlyNames && onlyNames.some((name) => !registered.some((p) => p.name === name))) throw new Error('--only requires registered nonempty patch names');
+  if (mode !== 'revert' && agentLoop && !isAbsolute(agentLoop)) throw new Error('QQBOT_AGENT_LOOP_FILE must be absolute');
   if (backupArg !== undefined && mode !== 'revert') throw new Error('--backup is only valid with --revert');
   if (mode === 'revert') revert();
   else {

@@ -1,5 +1,6 @@
 /* >>> dsh-qqbot-patch:events >>> */
     setupPersonCard(ctx, logger);
-    // 事件追踪（每条群消息象信判定：计划 + 情绪）
+    setupPersonState(ctx, config, logger, manager);
+    // 事件追踪（判定复用群记忆，单独维护待跟进状态）
     setupEvents(ctx, bot, config, logger);
 /* <<< dsh-qqbot-patch:events <<< */

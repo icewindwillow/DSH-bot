@@ -17,6 +17,10 @@ export QQBOT_PROFILE_NAME=qqbot-demo
 
 不要只改面板而忘了补丁和启动器；检查 `npm run doctor` 显示的目标。目录独立也不意味着长期记忆库独立，见[隐私说明](<privacy.md>)。
 
+## 群事件和记忆来源
+
+事件判定复用群记忆门控结果。只有达到条件的近期或定期事项才进入跟进列表。控制台展示确认过的追问、进展和结果。人物状态查询、日报来源查询都按当前 QQ 会话读取。若要把重复近况合并为摘要并归档原条目，需显式开启 `QQBOT_STATUS_SUMMARY=on`；默认保留原条目。
+
 ## 人格周表和私人相册
 
 在「时间表」添加或导入虚构示例，再到「人格设定」为需要的群人格启用。周表默认空白，按北京时间计算。休眠期间暂缓普通群聊回复，醒来后仅尝试回应在休眠期间呼叫过机器人的成员。
@@ -94,7 +98,7 @@ npm run panel
 群消息不必每条都送主模型。**判断模型（system-1）** 先做高频小判断，主模型只处理真正值得回的消息：
 
 - **象信（推荐）**：`XIANGXIN_API_KEY`。回复门控、记忆门控、事件/主语判断、表情气氛、主动接话钩子都走它，一次请求返回多个是非或评分，最省。未配置时相应门控自动放行，宁可多说，但主模型会读到更多消息。
-- **Jev 等免费模型**：Our Free Model 的 `jev-1.13-free` 可承担辅助生成（日报、人物卡、事件摘要）或作为主聊天模型。用 `QQBOT_DIARY_PROVIDER` / `QQBOT_EVENT_PROVIDER` / `QQBOT_CARD_PROVIDER` / `QQBOT_DIGEST_PROVIDER` 及其 `*_MODEL` 指向可用路由；不配置时这些辅助生成默认走 `opencode-go`。
+- **Jev 等免费模型**：Our Free Model 的 `jev-1.13-free` 可承担辅助生成（日报、人物卡）或作为主聊天模型。用 `QQBOT_DIARY_PROVIDER` / `QQBOT_CARD_PROVIDER` / `QQBOT_DIGEST_PROVIDER` 及其 `*_MODEL` 指向可用路由；不配置时这些辅助生成默认走 `opencode-go`。
 - 两者角色不同：**门控/分类用象信，便宜的文本生成用免费模型**。判断模型也会产生调用费用或受额度限制，不能承诺永久免费。
 
 若不确定当前用了什么，先看启动日志中的注册提示与面板实际模型，不要只凭填了哪个 Key 推断。
@@ -156,6 +160,9 @@ npm run panel
 | `QQBOT_CONTROL_PORT` | `7792` | 回环控制口，须 token，不能对外暴露 |
 
 跨服务商兜底是显式 opt-in：只有 `QQBOT_MODEL_FAILOVER=on` 才启用，启用前请明确设置后备 provider/model、对应路由与 Key，并接受该轮上下文外发及费用。Our Free Model 自身 combo 由插件另行管理，不受此开关代管。
+
+同轮兜底需要 DSH agent-loop 扩展。部署前设置 `QQBOT_AGENT_LOOP_FILE` 为当前宿主的 `@deepseek-ai/dsh-agent-loop/lib/index.js` 的绝对路径，再依次运行 `npm run patch:plan`、`npm run patch`、`npm run patch:check`。已重放验证 DSH 0.2.2-rc.1 的该扩展；锚点不匹配时整个事务会停止。常规部署不设置该变量，仍可使用原先的 DSH 基线。运行时另需 `QQBOT_MODEL_FAILOVER=on`。
+
 
 “关开关”通常只停止后续行为，不擦除历史记录。日记发布目标、其它辅助模型和调度细节需按对应代码/面板核实；不要把真实 ID 粘贴到公开示例。
 

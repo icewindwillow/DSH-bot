@@ -44,7 +44,7 @@ function setupBotControl(ctx, manager, config, logger) {
         if (req.headers.host !== `127.0.0.1:${port}` || req.headers.origin || req.headers.authorization !== `Bearer ${token}`)
             return send(res, 403, { ok: false, error: 'forbidden' });
         if (req.method === 'GET' && url.pathname === '/health')
-            return send(res, 200, { ok: true, service: 'qqbot-control', port });
+            return send(res, 200, { ok: true, service: 'qqbot-control', port, model: globalThis.__qqbotModelHealth?.() });
 
         if (req.method === 'POST' && url.pathname === '/session/new') {
             const body = await readBody(req);
