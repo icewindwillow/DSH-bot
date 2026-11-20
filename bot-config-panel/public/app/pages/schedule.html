@@ -1,15 +1,20 @@
 <section class="pane" id="paneSchedule" hidden>
   <div class="section-title-block">
-    <div><div class="page-eyebrow">PERSONA SCHEDULE</div><h1>时间表</h1><p>小易的虚拟周表；只影响已启用人格的群聊回复。</p></div>
+    <div><div class="page-eyebrow">PERSONA SCHEDULE</div><h1>时间表</h1><p>小易的每周安排和节日活动，适用于已启用时间表的群聊人格。</p></div>
     <button type="button" class="sc-help" id="btnScheduleHelp" aria-label="时间表说明">?</button>
   </div>
   <section class="card" aria-labelledby="scheduleCurrentTitle">
     <div class="card-head">
       <h2 id="scheduleCurrentTitle">北京时间 · 当前安排</h2><span id="schedulePublished" class="chip">读取中</span>
     </div>
-    <p id="scheduleCurrent" role="status">正在读取周表…</p>
+    <p id="scheduleCurrent" role="status">正在读取时间表…</p>
     <details id="schedulePreview" hidden><summary>查看当前提示词（已保存）</summary><pre class="preview" id="schedulePrompt"></pre></details>
   </section>
+  <div class="schedule-tabs" role="tablist" aria-label="时间表分类">
+    <button type="button" id="scheduleWeekTab" role="tab" aria-selected="true" aria-controls="scheduleWeekPanel">每周安排</button>
+    <button type="button" id="scheduleHolidayTab" role="tab" aria-selected="false" aria-controls="scheduleHolidayPanel" tabindex="-1">年度节假日</button>
+  </div>
+  <div id="scheduleWeekPanel" role="tabpanel" aria-labelledby="scheduleWeekTab">
   <section class="card" aria-labelledby="scheduleWeekTitle">
     <div class="card-head schedule-toolbar">
       <div><h2 id="scheduleWeekTitle">每周安排</h2><span class="sub">重叠的安排并排显示。点击空白添加，点击安排编辑。</span></div>
@@ -34,6 +39,62 @@
     </div>
     <div id="scheduleList"></div>
   </section>
+
+  </div>
+  <section id="scheduleHolidayPanel" class="card" role="tabpanel" aria-labelledby="scheduleHolidayTab" hidden>
+    <div class="card-head schedule-toolbar">
+      <div class="row holiday-year">
+        <button type="button" class="small ghost" id="holidayPreviousYear" aria-label="上一年">‹</button>
+        <label><input type="number" id="holidayYear" min="1000" max="9999" step="1" aria-label="节假日年份"> 年</label>
+        <button type="button" class="small ghost" id="holidayNextYear" aria-label="下一年">›</button>
+      </div>
+      <div class="row">
+        <button type="button" class="small ghost" id="btnHolidayReload">重新读取</button>
+        <button type="button" class="small" id="btnHolidayAdd" disabled>添加节日</button>
+        <button type="button" class="small primary" id="btnHolidaySave" disabled>保存时间表</button>
+      </div>
+    </div>
+    <p id="holidayMessage" class="msg" role="status" hidden></p>
+    <div id="holidayList"></div>
+  </section>
+
+  <dialog id="holidayEditor" class="mem-dialog" aria-labelledby="holidayEditorTitle">
+    <div class="mem-dialog-head"><h2 id="holidayEditorTitle">添加节日</h2></div>
+    <form id="holidayForm">
+      <label class="field"><span>节日名称</span><input type="text" id="holidayName" maxlength="48" required></label>
+      <label class="field"><span>节日日期</span><input type="date" id="holidayDate" required></label>
+      <div class="grid schedule-times">
+        <label class="field"><span>放假开始（可选）</span><input type="date" id="holidayFrom"></label>
+        <label class="field"><span>放假结束（可选）</span><input type="date" id="holidayThrough"></label>
+      </div>
+      <p id="holidayEditorError" class="msg err" role="alert"></p>
+      <div class="mem-actions">
+        <button type="button" class="danger" id="btnHolidayDelete" hidden>删除节日</button>
+        <button type="button" class="ghost" id="btnHolidayCancel">取消</button>
+        <button type="submit" class="primary">应用到草稿</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="holidayActivityEditor" class="mem-dialog" aria-labelledby="holidayActivityEditorTitle">
+    <div class="mem-dialog-head"><h2 id="holidayActivityEditorTitle">添加活动</h2></div>
+    <form id="holidayActivityForm">
+      <label class="field"><span>活动名称</span><input type="text" id="holidayActivityTitle" maxlength="48" required></label>
+      <label class="field"><span>活动日期</span><input type="date" id="holidayActivityDate" required></label>
+      <div class="grid schedule-times">
+        <label class="field"><span>开始时间</span><input type="text" id="holidayActivityStart" placeholder="20:00" maxlength="5" required></label>
+        <label class="field"><span>结束时间</span><input type="text" id="holidayActivityEnd" placeholder="22:00" maxlength="5" required></label>
+      </div>
+      <p class="hint">按北京时间填写 HH:MM。结束早于开始时延续到次日，也可填 24:00。</p>
+      <label class="field"><span>回话提示</span><textarea id="holidayActivityHint" maxlength="800" required></textarea></label>
+      <p id="holidayConflict" class="hint" hidden></p>
+      <p id="holidayActivityError" class="msg err" role="alert"></p>
+      <div class="mem-actions">
+        <button type="button" class="danger" id="btnHolidayActivityDelete" hidden>删除活动</button>
+        <button type="button" class="ghost" id="btnHolidayActivityCancel">取消</button>
+        <button type="submit" class="primary">应用到草稿</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="scheduleEditor" class="mem-dialog" aria-labelledby="scheduleEditorTitle">
     <div class="mem-dialog-head"><h2 id="scheduleEditorTitle">添加安排</h2></div>
@@ -62,8 +123,8 @@
   </dialog>
   <dialog id="scheduleHelp" class="mem-dialog" aria-labelledby="scheduleHelpTitle">
     <div class="mem-dialog-head"><h2 id="scheduleHelpTitle">关于时间表</h2></div>
-    <p>所有安排按北京时间每周重复。在「人格设定」启用后，空闲时才在安排开始点按概率抽签；已开始的安排会持续到结束。多个安排同一时刻通过抽签时，从通过的安排里随机选一个。</p>
-    <p>睡眠期间不接群聊；真正 @ 或叫到小易的人，会在醒来后收到原群里的一次 @ 提醒。示例和编辑都先进入草稿。保存后，已启用周表的人格才会使用这些安排。</p>
+    <p>每周安排按北京时间重复。在「人格设定」启用时间表后，周表在空闲时按概率抽签；多个安排同一时刻通过抽签时，从通过的安排里随机选一个。年度节假日的活动按具体日期执行，活动开始时优先于周表，结束后恢复周表在当时的安排。</p>
+    <p>睡眠期间不接群聊；真正 @ 或叫到小易的人，会在醒来后收到原群里的一次 @ 提醒。两个页签共用草稿，点击任一页签的「保存时间表」会一起保存。</p>
     <p>小易的示例周表参考<a href="https://fzy.bift.edu.cn/jyjx/bkspy/index.htm" target="_blank" rel="noopener noreferrer">北京服装学院公开的本科培养课程</a>与<a href="https://fzys.dhu.edu.cn/9771/main.htm" target="_blank" rel="noopener noreferrer">东华大学服装与艺术设计学院 2026 年招生指南</a>，上课时间和生活安排都是虚构的。</p>
     <form method="dialog" class="mem-actions"><button type="submit" autofocus>关闭</button></form>
   </dialog>

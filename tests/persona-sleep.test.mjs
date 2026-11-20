@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { readProfileDocument, withQqbotProfileDocuments } from '../plugins/qqbot-core/profile-documents.js';
-import { beijingScheduleTime, currentPersonaSchedule, modularGroupPersona, personaScheduleMeal, validatePersonaSchedule } from '../bot-config-panel/public/app/shared/persona-schedule.js';
+import { beijingScheduleTime, currentPersonaSchedule, holidayOverridesRange, modularGroupPersona, personaScheduleMeal, validatePersonaSchedule } from '../bot-config-panel/public/app/shared/persona-schedule.js';
 
 const source = readFileSync(new URL('../qqbot-patches/persona-sleep-helper.js', import.meta.url), 'utf8').replace('export function', 'function');
 const moodSource = readFileSync(new URL('../qqbot-patches/mood-helper.js', import.meta.url), 'utf8');
 const fakeSetup = new Function('process', 'Date', 'readProfileDocument', 'withQqbotProfileDocuments', 'validatePersonaSchedule',
-  'currentPersonaSchedule', 'beijingScheduleTime', 'modularGroupPersona', 'personaScheduleMeal', 'qqbotQueueForContext', 'setInterval', 'clearInterval',
+  'currentPersonaSchedule', 'holidayOverridesRange', 'beijingScheduleTime', 'modularGroupPersona', 'personaScheduleMeal', 'qqbotQueueForContext', 'setInterval', 'clearInterval',
   `${source}\nreturn setupPersonaSleep;`);
 const fakeMood = new Function('process', 'Date', 'readProfileDocument', 'withQqbotProfileDocuments', 'setInterval', 'console',
   `${moodSource}\nreturn setupMood;`);
@@ -44,7 +44,7 @@ test('sleep blocks group replies; addressed callers are persisted, deduped and i
     bot.use = fn => { middleware = fn; };
     bot.sendMarkdown = async (target, text) => { deliveries.push({ target, text }); };
     const setup = fakeSetup({ env: { QQBOT_PROFILE_DIR: profile } }, FixedDate, readProfileDocument, withQqbotProfileDocuments,
-      validatePersonaSchedule, currentPersonaSchedule, beijingScheduleTime, modularGroupPersona, personaScheduleMeal,
+      validatePersonaSchedule, currentPersonaSchedule, holidayOverridesRange, beijingScheduleTime, modularGroupPersona, personaScheduleMeal,
       () => ({ enqueue(item) { task = item.run(new AbortController().signal); }, close() {} }),
       fn => { tick = fn; return {}; }, () => {});
     setup({ effect: effect => { cleanup = effect(); } }, bot, { appId: 'BOT01' }, { warn: msg => errors.push(msg) });
@@ -111,6 +111,18 @@ test('sleep blocks group replies; addressed callers are persisted, deduped and i
     await robot.run(); await robot.run();
     assert.deepEqual(memories, [meal], 'record the same meal once even without messages');
     assert.equal(mood.snapshot('GROUP_ONE').meal, undefined, 'the mood effect ends with the meal');
+    const schedule = readProfileDocument(profile, 'persona-schedule');
+    write('persona-schedule', { ...schedule, holidays: [{
+      id: 'winter-festival', date: '2026-12-21', name: '冬日节', activities: [
+        { id: 'chat', date: '2026-12-21', title: '节日活动', hint: '和朋友过节。', start: 735, end: 750 },
+      ],
+    }] });
+    now = Date.parse('2026-12-21T04:14:00Z');
+    assert.equal(await robot.dispatch({}), false);
+    now += 60000;
+    assert.equal(await robot.dispatch({}), true, 'the activity overrides the sleep gate');
+    now += 15 * 60000;
+    assert.equal(await robot.dispatch({}), false, 'the sleep gate resumes when the activity ends');
     assert.deepEqual(pending(), []);
     assert.deepEqual(errors, []);
   } finally {

@@ -3,14 +3,28 @@
 #paneSchedule .card-head { flex-wrap: wrap; }
 #paneSchedule .schedule-toolbar { margin-bottom: 12px; }
 #scheduleCurrent { margin-block: 8px; }
-#scheduleMessage { margin-block: 0 10px; font-size: 12px; color: var(--muted); }
-#scheduleMessage.ok { color: var(--ok); }
-#scheduleMessage.err { color: var(--err); }
+#paneSchedule :is(#scheduleMessage, #holidayMessage) { margin-block: 0 10px; font-size: 12px; }
 #paneSchedule .schedule-day-picker { display: none; margin-bottom: 10px; }
 #schedulePrompt { white-space: pre-wrap; overflow-wrap: anywhere; }
-#scheduleEditor .field { margin-block: 8px; }
+#paneSchedule dialog .field { margin-block: 8px; }
 #scheduleProbability { width: 90px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 6px 8px; border-radius: 8px; }
 #scheduleEditor .err { color: var(--err); }
+.schedule-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.schedule-tabs button { color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 8px 8px 0 0; }
+.schedule-tabs button[aria-selected="true"] { color: var(--text); background: var(--panel2); border-color: var(--line); font-weight: 700; }
+.holiday-year input { width: 6em; font-variant-numeric: tabular-nums; }
+#paneSchedule input[type=date] {
+  min-width: 0; width: 100%; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px;
+}
+.holiday-card { border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.holiday-card:last-child { border-bottom: 1px solid var(--line); }
+.holiday-card summary { padding: 12px 4px; cursor: pointer; }
+.holiday-heading { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.holiday-heading time { min-width: 5em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.holiday-body { padding: 0 4px 12px; }
+.holiday-body ul { list-style: none; margin: 10px 0 0; padding: 0; }
+.holiday-active { color: var(--accent); }
 .schedule-calendar { max-height: min(60vh, 620px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .schedule-grid {
   --schedule-hour: 52px;

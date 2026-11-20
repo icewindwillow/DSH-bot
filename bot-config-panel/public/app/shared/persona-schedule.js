@@ -19,6 +19,37 @@ export function formatScheduleMinute(minute) {
     return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
 }
 
+export function parseScheduleTime(value, end = false) {
+    if (end && value === '24:00') return 1440;
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error('请按 HH:MM 输入时间，例如 08:00；结束也可填 24:00。');
+    const [hours, minutes] = value.split(':').map(Number);
+    return hours * 60 + minutes;
+}
+
+function scheduleDateMinute(date) {
+    return Date.parse(`${date}T00:00:00Z`) / 60000;
+}
+
+function holidayDate(value) {
+    if (typeof value !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) throw new Error('请选择有效的日期。');
+    const date = new Date(scheduleDateMinute(value) * 60000);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new Error('请选择有效的日期。');
+    return value;
+}
+
+function holidayActivityBounds(date, start, end) {
+    const midnight = scheduleDateMinute(date);
+    return [midnight + start, midnight + end + (end < start ? 1440 : 0)];
+}
+
+export function holidayOverridesRange(doc, date, start, end) {
+    const [from, to] = holidayActivityBounds(date, start, end);
+    return doc.holidays?.some(holiday => holiday.activities.some(activity => {
+        const [activityStart, activityEnd] = holidayActivityBounds(activity.date, activity.start, activity.end);
+        return activityStart < to && from < activityEnd;
+    })) ?? false;
+}
+
 // Day indexes are Monday=0 to Sunday=6. Split wraps for the grid, collision checks and matching.
 export function scheduleSegments(entry) {
     return entry.days.flatMap(day => {
@@ -55,7 +86,45 @@ export function validatePersonaSchedule(doc) {
         return { id: entry.id, days: [...days].sort((a, b) => a - b), start, end, title, hint, probability, sleep,
             ...(mood ? { mood } : {}), ...(meal ? { meal } : {}) };
     });
-    return { entries };
+    return doc.holidays === undefined ? { entries } : { entries, holidays: validateScheduleHolidays(doc.holidays) };
+}
+
+export function validateScheduleHolidays(list) {
+    if (!Array.isArray(list)) throw new Error('年度节假日必须包含节日列表。');
+    const ids = new Set();
+    const intervals = [];
+    function addId(id) {
+        if (typeof id !== 'string' || !/^[\w-]{1,64}$/.test(id) || ids.has(id)) throw new Error('节日或活动标识无效或重复。');
+        ids.add(id);
+    }
+    const holidays = list.map(holiday => {
+        addId(holiday?.id);
+        const name = typeof holiday.name === 'string' ? holiday.name.trim() : '';
+        if (!name || name.length > 48 || /[\r\n]/.test(name)) throw new Error('请输入 1–48 字的单行节日名称。');
+        const date = holidayDate(holiday.date);
+        const from = holiday.from === undefined || holiday.from === '' ? '' : holidayDate(holiday.from);
+        const through = holiday.through === undefined || holiday.through === '' ? '' : holidayDate(holiday.through);
+        if (Boolean(from) !== Boolean(through) || from > through) throw new Error('请填写完整的放假起止日期，结束日期不得早于开始日期。');
+        if (!Array.isArray(holiday.activities)) throw new Error(`「${name}」的活动列表无效。`);
+        const activities = holiday.activities.map(activity => {
+            addId(activity?.id);
+            const date = holidayDate(activity.date);
+            const { id, title, hint, start, end } = validatePersonaSchedule({
+                entries: [{ id: activity.id, title: activity.title, hint: activity.hint, start: activity.start, end: activity.end, days: [0] }],
+            }).entries[0];
+            const [from, to] = holidayActivityBounds(date, start, end);
+            intervals.push({ from, to, title });
+            return { id, date, title, hint, start, end };
+        });
+        return { id: holiday.id, name, date, from, through, activities };
+    });
+    intervals.sort((a, b) => a.from - b.from);
+    for (let i = 1; i < intervals.length; i++) {
+        if (intervals[i].from < intervals[i - 1].to) {
+            throw new Error(`节日活动「${intervals[i - 1].title}」和「${intervals[i].title}」的时间重叠，请调整后再保存。`);
+        }
+    }
+    return holidays;
 }
 
 // Use the occurrence date + ID as a stable random seed. The panel and every gateway
@@ -75,7 +144,7 @@ function scheduleRandom(key) {
 export const SCHEDULE_MEALS = { breakfast: '早饭', lunch: '午饭', dinner: '晚饭' };
 const regularMeals = {
     breakfast: ['茶叶蛋和豆浆', '菜包和小米粥', '馒头配咸菜', '吐司和牛奶', '鸡蛋饼'],
-    lunch: ['番茄炒蛋盖饭', '青菜肉丝面', '食堂的两荤一素', '鸡腿饭', '白米饭配咸菜和炒青菜'],
+    lunch: ['番茄炒蛋盖饭', '青菜肉丝面', '两荤一素盒饭', '鸡腿饭', '白米饭配咸菜和炒青菜'],
     dinner: ['馄饨', '鸡蛋炒饭', '冬瓜丸子汤配米饭', '小碗牛肉面', '蒸蛋和清炒小白菜配米饭'],
 };
 const goodMeals = {
@@ -103,6 +172,16 @@ export function personaScheduleMeal(entry, time) {
 
 const scheduleSimulations = new Map();
 export function currentPersonaSchedule(doc, time) {
+    if (doc.holidays?.length) {
+        const minute = scheduleDateMinute(time.date) + time.minuteOfDay;
+        for (const holiday of doc.holidays) {
+            const active = holiday.activities.find(activity => {
+                const [start, end] = holidayActivityBounds(activity.date, activity.start, activity.end);
+                return start <= minute && minute < end;
+            });
+            if (active) return { ...active, holidayName: holiday.name, probability: 100, sleep: false };
+        }
+    }
     if (!doc.entries.length) return undefined;
     const day = Date.parse(`${time.date}T00:00:00Z`) / 86400000;
     if (!Number.isFinite(day)) return undefined;
@@ -162,6 +241,7 @@ export function personaSchedulePrompt(entry, time) {
     if (!entry || entry.sleep) return '';
     const meal = personaScheduleMeal(entry, time);
     const mealLine = meal ? `\n这一顿${meal.label}吃的是${meal.dish}，${meal.reaction}。聊到这顿饭时用这个结果。` : '';
-    return `【你的虚拟时间表 · 当前安排】${entry.title}\n回话提示：${entry.hint}${mealLine}\n这是此刻的虚拟生活状态，只影响答话的语气和顺口带出的细节。可以主动提一句近况，不用等人问；示例不是固定台词，同一段对话不必反复提。认真问题照常答，不用为安排推迟、拒绝或主动发消息。`;
+    const title = entry.holidayName ? `${entry.holidayName} · ${entry.title}` : entry.title;
+    return `【你的虚拟时间表 · 当前安排】${title}\n回话提示：${entry.hint}${mealLine}\n这是此刻的虚拟生活状态，只影响答话的语气和顺口带出的细节。可以主动提一句近况，不用等人问；示例不是固定台词，同一段对话不必反复提。认真问题照常答，不用为安排推迟、拒绝或主动发消息。`;
 }
 /* <<< dsh-qqbot-patch:persona-schedule-helper <<< */

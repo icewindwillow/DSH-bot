@@ -1423,15 +1423,16 @@ const server = createServer((req, res) => {
       const normalized = validatePersonaSchedule(data);
       const time = beijingScheduleTime();
       const current = currentPersonaSchedule(normalized, time);
-      return { ok: true, scheduleRevision: 2, data: normalized, version: profileDocumentVersion(data), time,
-        current: current ? { id: current.id, title: current.title, probability: current.probability, sleep: current.sleep } : null, preview: personaSchedulePrompt(current, time) };
+      return { ok: true, scheduleRevision: 3, data: normalized, version: profileDocumentVersion(data), time,
+        current: current ? { id: current.id, title: current.title, probability: current.probability, sleep: current.sleep,
+          ...(current.holidayName ? { holidayName: current.holidayName } : {}) } : null, preview: personaSchedulePrompt(current, time) };
     };
     if (req.method === 'GET') {
       try {
         const data = readProfileDocument(PROFILE_DIR, 'persona-schedule');
         return send(200, snapshot(data));
       } catch {
-        return send(500, { ok: false, error: '无法读取周表，请检查本地配置后重试。' });
+        return send(500, { ok: false, error: '无法读取时间表，请检查本地配置后重试。' });
       }
     }
     if (req.method === 'PUT') {
@@ -1439,7 +1440,8 @@ const server = createServer((req, res) => {
         const validated = validatePersonaSchedule(data);
         const saved = withProfileDocuments(db => db.update('persona-schedule', current => {
           requireProfileDocumentVersion(current, baseVersion, '时间表', '请先点击「重新读取」。');
-          return validated;
+          return validated.holidays === undefined && current.holidays !== undefined
+            ? { ...validated, holidays: current.holidays } : validated;
         }));
         return send(200, { ...snapshot(saved), restartRequired: false });
       }).catch(err => send(err?.status === 409 ? 409 : 400, { ok: false, error: String(err?.message ?? err) }));

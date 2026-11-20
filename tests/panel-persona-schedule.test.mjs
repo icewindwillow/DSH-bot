@@ -36,7 +36,8 @@ test('time table is authenticated, empty by default, versioned and previewed usi
     assert.equal((await fetch(`${root}/api/persona-schedule`)).status, 401);
     const page = await fetch(root);
     const cookie = page.headers.get('set-cookie').split(';')[0];
-    assert.match(await page.text(), /id="tabPersona".*id="tabSchedule"[\s\S]*id="paneSchedule"/);
+    const html = await page.text();
+    assert.match(html, /id="tabPersona".*id="tabSchedule"[\s\S]*id="paneSchedule"/);
     async function request(path, expected, data) {
       const response = await fetch(`${root}/api/${path}`, {
         method: data ? 'PUT' : 'GET', headers: { cookie, 'content-type': 'application/json' }, body: data ? JSON.stringify(data) : undefined,
@@ -47,7 +48,7 @@ test('time table is authenticated, empty by default, versioned and previewed usi
     }
     const empty = await request('persona-schedule', 200);
     assert.deepEqual(empty.data, { entries: [] });
-    assert.equal(empty.scheduleRevision, 2);
+    assert.equal(empty.scheduleRevision, 3);
     assert.equal(empty.current, null);
     assert.equal(empty.preview, '');
     assert.equal(existsSync(join(profile, 'qqbot-documents.sqlite')), false, 'reading an empty week must not seed or write');
@@ -70,6 +71,21 @@ test('time table is authenticated, empty by default, versioned and previewed usi
     });
     assert.equal(asleep.current.sleep, true);
     assert.equal(asleep.preview, '', 'sleep is a reply gate rather than a persona prompt');
+
+    assert.match(html, /role="tab"[^>]*>年度节假日<\/button>/);
+    const today = asleep.time.date;
+    const annual = { id: 'festival', name: '节日测试', date: today, from: '', through: '', activities: [
+      { id: 'event', date: today, title: '过节', hint: '正在过节。', start: 0, end: 1440 },
+    ] };
+    const festival = await request('persona-schedule', 200, {
+      baseVersion: asleep.version, data: { ...asleep.data, holidays: [annual] },
+    });
+    assert.equal(festival.current.holidayName, annual.name);
+    assert.equal(festival.current.sleep, false);
+    assert.match(festival.preview, /节日测试 · 过节/);
+    assert.deepEqual(readProfileDocument(profile, 'persona-schedule').holidays, [annual]);
+    const legacyWrite = await request('persona-schedule', 200, { baseVersion: festival.version, data });
+    assert.deepEqual(legacyWrite.data.holidays, [annual]);
 
     const overview = await request('overview', 200);
     const personas = { modules: { a: '人格' }, personas: { default: { modules: ['a'], useSchedule: 'yes' } } };

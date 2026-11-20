@@ -9,6 +9,26 @@ import { xiaoyiScheduleExample } from '../bot-config-panel/public/app/shared/xia
 const entry = (values = {}) => ({ id: 'late', title: '刷视频', days: [6], start: 1380, end: 60, hint: '熬夜刷视频。', ...values });
 const at = iso => beijingScheduleTime(new Date(iso));
 
+test('a dated activity overrides the weekly event across Beijing New Year and then restores it', () => {
+  const weekly = entry({ days: [0, 1, 2, 3, 4, 5, 6], start: 0, end: 1440, sleep: true });
+  const party = { id: 'countdown', date: '2026-12-31', start: 1380, end: 30, title: '跨年倒数', hint: '和朋友一起倒数。' };
+  const holiday = { id: 'new-year', date: '2027-01-01', name: '元旦', activities: [party] };
+  const doc = validatePersonaSchedule({ entries: [weekly], holidays: [holiday] });
+  const match = iso => currentPersonaSchedule(doc, at(iso));
+  assert.equal(match('2026-12-31T14:59:59Z').sleep, true);
+  assert.equal(match('2026-12-31T15:00:00Z').id, 'countdown');
+  assert.equal(match('2026-12-31T16:29:59Z').holidayName, '元旦');
+  assert.equal(match('2026-12-31T16:30:00Z').sleep, true);
+  assert.equal(match('2027-12-31T15:00:00Z').id, 'late');
+
+  const next = { ...party, id: 'greeting', date: '2027-01-01', start: 30, end: 60 };
+  assert.doesNotThrow(() => validatePersonaSchedule({ entries: [], holidays: [{ ...holiday, activities: [party, next] }] }));
+  assert.throws(() => validatePersonaSchedule({ entries: [], holidays: [
+    holiday, { ...holiday, id: 'another-holiday', activities: [{ ...next, start: 29 }] },
+  ] }), /时间重叠/);
+  assert.throws(() => validatePersonaSchedule({ entries: [], holidays: [{ ...holiday, date: '2026-02-29' }] }), /有效的日期/);
+});
+
 test('Beijing time: midnight is 00:00; repeating intervals wrap Sunday into Monday', () => {
   const week = validatePersonaSchedule({ entries: [entry({ days: [6, 2] })] });
   assert.deepEqual(week.entries[0].days, [2, 6]);
@@ -97,10 +117,17 @@ test('Xiaoyi sample: school, night sleep and overlapping alternatives match the 
     assert.equal(match(day, 8).mood, undefined);
   }
   assert.equal(id(2, 8), 'wednesday-history');
-  assert.equal(id(0, 10), 'monday-design');
-  assert.equal(id(4, 10), 'friday-pe');
-  assert.equal(id(4, 11, 40), 'friday-tired');
-  assert.equal(match(4, 11, 40).sleep, false);
+  assert.equal(id(0, 10), undefined);
+  assert.equal(id(0, 13, 30), 'monday-design');
+  assert.equal(id(0, 15, 10), 'monday-drape');
+  assert.equal(id(3, 10), 'thursday-english');
+  assert.equal(id(3, 11, 45), 'lunch');
+  assert.equal(id(3, 13, 30), 'friday-pe');
+  assert.equal(id(3, 15, 10), 'friday-tired');
+  assert.equal(match(3, 15, 10).sleep, false);
+  assert.equal(id(3, 15, 30), 'thursday-studio');
+  assert.equal(id(3, 18), 'dinner');
+  assert.equal(id(4, 11, 45), 'lunch');
   assert.equal(id(5, 10, 30), 'doll-sewing');
   assert.equal(id(5, 15), 'doll-photos');
   assert.equal(id(6, 19, 30), 'sketch');

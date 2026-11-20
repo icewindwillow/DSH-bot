@@ -1,9 +1,10 @@
 import { $, api, clone, esc } from '../shared/runtime.js';
 import {
-  beijingScheduleTime, currentPersonaSchedule, formatScheduleMinute, personaSchedulePrompt,
+  beijingScheduleTime, currentPersonaSchedule, formatScheduleMinute, parseScheduleTime, personaSchedulePrompt,
   scheduleSegments, SCHEDULE_WEEKDAYS, validatePersonaSchedule,
 } from '../shared/persona-schedule.js';
 import { xiaoyiScheduleExample } from '../shared/xiaoyi-schedule-example.js';
+import { highlightHolidayActivity, initHolidaySchedule, renderHolidaySchedule } from './schedule-holidays.js';
 
 const route = '/api/persona-schedule';
 const shortDays = SCHEDULE_WEEKDAYS.map(day => day.replace('星期', '周'));
@@ -18,10 +19,12 @@ export function hasScheduleDraft() {
 }
 
 function message(text, kind = '') {
-  const status = $('scheduleMessage');
-  status.hidden = !text;
-  status.textContent = text;
-  status.className = `msg ${kind}`;
+  for (const id of ['scheduleMessage', 'holidayMessage']) {
+    const status = $(id);
+    status.hidden = !text;
+    status.textContent = text;
+    status.className = `msg ${kind}`;
+  }
 }
 
 function updateControls() {
@@ -30,10 +33,13 @@ function updateControls() {
   $('btnScheduleAdd').disabled = busy || !draft;
   $('btnScheduleExamples').disabled = busy || !draft;
   $('btnScheduleReload').disabled = busy;
+  $('btnHolidaySave').disabled = busy || !hasScheduleDraft();
+  $('btnHolidayAdd').disabled = busy || !draft;
+  $('btnHolidayReload').disabled = busy;
 }
 
 function applySnapshot(snapshot) {
-  if (snapshot.scheduleRevision !== 2) throw new Error('控制台服务尚未更新到支持概率和睡眠的版本。');
+  if (snapshot.scheduleRevision !== 3) throw new Error('请更新控制台服务后重新读取时间表。');
   version = snapshot.version;
   saved = snapshot.data;
   draft = clone(saved);
@@ -42,6 +48,7 @@ function applySnapshot(snapshot) {
     selectedDay = snapshot.time.dayIndex;
     $('scheduleListDay').value = String(selectedDay);
   }
+  renderHolidaySchedule(draft);
   renderGrid();
 }
 
@@ -77,14 +84,16 @@ async function saveSchedule() {
 function updateNow() {
   const time = beijingScheduleTime();
   const active = saved && currentPersonaSchedule(saved, time);
-  const summary = saved ? `${time.weekday} ${time.hour}:${time.minute} · ${active?.title ?? '当前无安排'}${active?.sleep ? ' · 睡眠中' : ''}${active?.mood === 'early-rise' ? ' · 起床气' : ''}`
-    : loading || !loadFailed ? '正在读取周表…' : '无法读取当前安排';
+  const source = active ? ` · ${active.holidayName ? `节日活动 · ${active.holidayName}` : '每周安排'}` : '';
+  const summary = saved ? `${time.weekday} ${time.hour}:${time.minute}${source} · ${active?.title ?? '当前无安排'}${active?.sleep ? ' · 睡眠中' : ''}${active?.mood === 'early-rise' ? ' · 起床气' : ''}`
+    : loading || !loadFailed ? '正在读取时间表…' : '无法读取当前安排';
   if ($('scheduleCurrent').textContent !== summary) $('scheduleCurrent').textContent = summary;
   $('schedulePublished').textContent = loadFailed ? (saved ? '上次读取' : '读取失败')
-    : !saved ? '读取中' : hasScheduleDraft() ? '有未保存修改' : saved.entries.length ? '已配置' : '未配置';
+    : !saved ? '读取中' : hasScheduleDraft() ? '有未保存修改' : (saved.entries.length || saved.holidays?.length) ? '已配置' : '未配置';
   $('schedulePreview').hidden = !active || active.sleep;
   const preview = personaSchedulePrompt(active, time);
   if ($('schedulePrompt').textContent !== preview) $('schedulePrompt').textContent = preview;
+  highlightHolidayActivity(active);
   if (!draft) return;
   for (const head of $('scheduleGrid').querySelectorAll('[data-schedule-head]')) {
     if (Number(head.dataset.scheduleHead) === time.dayIndex) head.setAttribute('aria-current', 'date');
@@ -96,7 +105,7 @@ function updateNow() {
   nowLine.style.top = `calc(${time.minuteOfDay} * var(--schedule-hour) / 60)`;
   const currentDraft = currentPersonaSchedule(draft, time);
   for (const block of $('scheduleGrid').querySelectorAll('[data-schedule-id]')) {
-    const matches = block.dataset.scheduleId === currentDraft?.id
+    const matches = !currentDraft?.holidayName && block.dataset.scheduleId === currentDraft?.id
       && Number(block.parentNode.dataset.scheduleDay) === time.dayIndex
       && Number(block.dataset.start) <= time.minuteOfDay && time.minuteOfDay < Number(block.dataset.end);
     if (matches) block.setAttribute('aria-current', 'time');
@@ -181,7 +190,7 @@ function renderGrid() {
       }).join('')}
       ${day === selectedDay ? '<span id="scheduleNow" class="schedule-now" aria-hidden="true"></span>' : ''}</div>`).join('')}`;
   updateNow();
-  if (!didScroll) {
+  if (!didScroll && !$('scheduleWeekPanel').hidden) {
     didScroll = true;
     scrollToTime(beijingScheduleTime().minuteOfDay);
   }
@@ -211,13 +220,6 @@ function openEditor(entry, day, start, end, source = null) {
   $('scheduleTitle').focus();
 }
 
-function parseTime(value, end = false) {
-  if (end && value === '24:00') return 1440;
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error('请按 HH:MM 输入时间，例如 08:00；结束也可填 24:00。');
-  const [hours, minutes] = value.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
 function finishEdit(focusId) {
   $('scheduleEditor').close();
   renderGrid(); updateControls(); message(hasScheduleDraft() ? '草稿已更新，保存后才会生效。' : '');
@@ -232,6 +234,38 @@ function finishEdit(focusId) {
 }
 
 export function initSchedulePage() {
+  initHolidaySchedule({
+    isBusy: () => !draft || loading || saving,
+    onChange: holidays => {
+      draft = { ...draft, holidays };
+      renderHolidaySchedule(draft);
+      updateControls();
+      updateNow();
+      message('草稿已更新，保存后才会生效。');
+    },
+  });
+  const tabs = [$('scheduleWeekTab'), $('scheduleHolidayTab')];
+  function selectTab(tab) {
+    for (const item of tabs) {
+      const selected = item === tab;
+      item.setAttribute('aria-selected', selected);
+      item.tabIndex = selected ? 0 : -1;
+      $(item.getAttribute('aria-controls')).hidden = !selected;
+    }
+    if (tab === tabs[1] && draft) renderHolidaySchedule(draft);
+    if (tab === tabs[0] && draft && !didScroll) renderGrid();
+    else updateNow();
+  }
+  for (const [index, tab] of tabs.entries()) {
+    tab.onclick = () => selectTab(tab);
+    tab.onkeydown = event => {
+      const next = { Home: tabs[0], End: tabs[1], ArrowLeft: tabs[1 - index], ArrowRight: tabs[1 - index] }[event.key];
+      if (!next) return;
+      event.preventDefault();
+      selectTab(next);
+      next.focus();
+    };
+  }
   const dayOptions = SCHEDULE_WEEKDAYS.map((day, i) => `<option value="${i}">${day}</option>`).join('');
   $('scheduleDay').innerHTML = dayOptions;
   $('scheduleListDay').innerHTML = `${dayOptions}<option value="all">整周</option>`;
@@ -252,10 +286,12 @@ export function initSchedulePage() {
   $('btnScheduleHelp').onclick = () => $('scheduleHelp').showModal();
   $('btnScheduleReload').onclick = loadSchedule;
   $('btnScheduleSave').onclick = saveSchedule;
+  $('btnHolidayReload').onclick = loadSchedule;
+  $('btnHolidaySave').onclick = saveSchedule;
   $('btnScheduleExamples').onclick = () => {
     if (!draft || loading || saving) return;
     if (draft.entries.length && !confirm('用小易的示例周表替换当前草稿？已保存的周表不会改变，除非你再点击保存。')) return;
-    draft = validatePersonaSchedule(xiaoyiScheduleExample);
+    draft = { ...draft, ...validatePersonaSchedule(xiaoyiScheduleExample) };
     renderGrid(); updateControls(); message('已载入小易周表草稿。请确认课程、概率和睡眠时段，再决定是否保存。');
     scrollToTime(435);
   };
@@ -283,7 +319,7 @@ export function initSchedulePage() {
   $('btnScheduleCancel').onclick = () => $('scheduleEditor').close();
   $('btnScheduleDelete').onclick = () => {
     if (!editedId || !confirm('删除这条安排？它在所有选中的星期都会被移除。')) return;
-    draft = { entries: draft.entries.filter(entry => entry.id !== editedId) };
+    draft = { ...draft, entries: draft.entries.filter(entry => entry.id !== editedId) };
     finishEdit();
   };
   $('scheduleForm').onsubmit = event => {
@@ -293,12 +329,12 @@ export function initSchedulePage() {
         id: editedId ?? crypto.randomUUID(), title: $('scheduleTitle').value, hint: $('scheduleHint').value,
         probability: $('scheduleProbability').valueAsNumber, sleep: $('scheduleSleep').checked,
         days: [...$('scheduleDays').querySelectorAll('input:checked')].map(input => Number(input.value)),
-        start: parseTime($('scheduleStart').value.trim()), end: parseTime($('scheduleEnd').value.trim(), true),
+        start: parseScheduleTime($('scheduleStart').value.trim()), end: parseScheduleTime($('scheduleEnd').value.trim(), true),
       };
       if (!entry.sleep && $('scheduleMood').value) entry.mood = $('scheduleMood').value;
       if (!entry.sleep && $('scheduleMeal').value) entry.meal = $('scheduleMeal').value;
       const entries = editedId ? draft.entries.map(previous => previous.id === editedId ? entry : previous) : [...draft.entries, entry];
-      draft = validatePersonaSchedule({ entries });
+      draft = { ...draft, ...validatePersonaSchedule({ entries }) };
       finishEdit(entry.id);
     } catch (error) {
       $('scheduleEditorError').textContent = error.message;

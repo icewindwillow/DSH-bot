@@ -44,7 +44,8 @@ export function setupPersonaSleep(ctx, bot, config, logger) {
             const key = `${start}:${entry.id}`;
             if (recordedMeals.has(key)) continue;
             const startTime = beijingScheduleTime(new Date(start));
-            if (currentPersonaSchedule(week, startTime)?.id !== entry.id
+            if (holidayOverridesRange(week, startTime.date, entry.start, entry.end)
+                || currentPersonaSchedule(week, startTime)?.id !== entry.id
                 || remember(personaScheduleMeal(entry, startTime), start)) recordedMeals.add(key);
         }
     }
