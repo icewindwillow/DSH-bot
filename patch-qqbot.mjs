@@ -637,6 +637,13 @@ const PATCHES = [
     needsFs: true,
   },
   {
+    name: 'owner-dsh-bridge',
+    file: join(PKG, 'gateway', 'middleware-setup.js'),
+    snippet: 'owner-dsh-bridge.js',
+    anchor: ['    bot.use(rateLimiter());'],
+    needsFs: false,
+  },
+  {
     name: 'compact-resume',
     file: join(PKG, 'commands', 'session.js'),
     snippet: 'compact-resume.js',
