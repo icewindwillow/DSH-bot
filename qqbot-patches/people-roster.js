@@ -2,11 +2,13 @@
             // 群成员档案：拆成「静态档案」+「动态说话人上下文」，让静态前缀能被 prompt cache 命中
             const roster = record.scope === 'group' ? buildPeopleRoster(record.peerId) : '';
             const speakerCtx = record.scope === 'group' ? buildSpeakerContext(record.peerId, record) : '';
-            if (!prompt && roster === '' && speakerCtx === '')
+            if (!prompt && roster === '' && speakerCtx === '' && allowChatBlock === '')
                 return assembled;
             const extraSections = [];
             if (prompt)
                 extraSections.push({ name: 'qqbot:scope-prompt', order: 90, text: prompt });
+            if (allowChatBlock !== '')
+                extraSections.push({ name: 'qqbot:allow-chat', order: 90, text: allowChatBlock });
             if (roster !== '')
                 extraSections.push({ name: 'qqbot:people-roster', order: 91, text: roster });
             if (speakerCtx !== '')
@@ -22,6 +24,7 @@
             // 动态段不能留在 system prompt：system 只要变一个字符，后面的整段对话历史都会失去前缀缓存。
             // 改注入 runtime context（当轮消息之后的快照），system 与历史前缀保持稳定，缓存才能跨轮命中。
             const dynamicNames = new Set([
+                'qqbot:allow-chat',
                 'qqbot:speaker-context',
                 'qqbot:role-skill',
                 'qqbot:person-feedback',

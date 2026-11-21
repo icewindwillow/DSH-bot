@@ -15,9 +15,9 @@
                 : '';
             const allowChatBlock = record.scope === 'group'
                 && globalThis.__qqbotAllowChat?.isActive?.(record.peerId) === true
-                ? `\n\n【允许对话】主人刚才允许你在这段时间里回复群里的观察对象${allowTargets ? `（${allowTargets}）` : ''}：它说话就正常接一句，不要因为「没叫你」就直接 [SILENT]。时限到了以后恢复原来的规矩。`
+                ? `【允许对话】主人刚才允许你在这段时间里回复群里的观察对象${allowTargets ? `（${allowTargets}）` : ''}：它说话就正常接一句，不要因为「没叫你」就直接 [SILENT]。时限到了以后恢复原来的规矩。`
                 : '';
             const prompt = record.scope === 'group'
-                ? `${basePrompt}${GROUP_RULES}${stickerUsage}${allowChatBlock}`
+                ? `${basePrompt}${GROUP_RULES}${stickerUsage}`
                 : basePrompt;
 /* <<< dsh-qqbot-patch:group-prompt <<< */
