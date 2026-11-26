@@ -249,7 +249,7 @@ function setupAnimationGeneration(ctx, bot, manager, logger) {
                 : '你是动画总导演、视觉资产拆分师和执行代理。请把参考图转化为一个约定时长的原创短动画，并实际输出 animation.mp4。',
             '先分析参考图的角色、道具、材质、色彩、构图和可动区域，再建立视觉设定表。必须把参考图重绘或拆分成可动画化的本地素材，保存到 assets/，至少包含角色主体、关键道具、背景或场景层，以及需要独立运动的部件。不要把原图直接做简单平移缩放作为最终方案。',
             '必须先写 storyboard.md，包含每个镜头的时间段、景别、构图、镜头运动、角色动作、道具动作、字幕和声音。必须再写 motion-plan.json，记录素材清单、动作关键帧、镜头关键帧、字幕、声音和 render_engine。',
-            '本 MVP 固定使用 Remotion 完成时间轴、镜头、字幕、声音和 MP4 渲染。Remotion runtime 已安装在 /Users/icewind/.dsh/profiles/qqbot/generated-animations/remotion-runtime，请在工作区创建 package.json、src/Root.jsx 或等价 Remotion 项目，并调用该 runtime 渲染。可以用本机绘图能力生成 storyboard-frames，也可以用 Pillow 或 SVG 做后处理，但最终视频必须使用每个完整分镜画面作为画面基础。',
+            `本 MVP 固定使用 Remotion 完成时间轴、镜头、字幕、声音和 MP4 渲染。Remotion runtime 已安装在 ${REMOTION_RUNTIME}，请在工作区创建 package.json、src/Root.jsx 或等价 Remotion 项目，并调用该 runtime 渲染。可以用本机绘图能力生成 storyboard-frames，也可以用 Pillow 或 SVG 做后处理，但最终视频必须使用每个完整分镜画面作为画面基础。`,
             '每个分镜画面都应独立绘制出完整构图。至少四张分镜图之间要有明确变化，例如眼神、手臂、叉子、立牌、反光、遮挡、景别或镜头位置变化。Remotion 负责在完整分镜之间做节奏、转场和轻微镜头运动。',
             '如果需要声音，请使用本地合成音效或本地 TTS，不要联网下载素材。字幕和声音必须写入分镜与 motion-plan.json。',
             '需求 JSON：', JSON.stringify({ productionPreference: SOURCE_LABELS[state.source], description: state.description, durationSeconds: state.duration, resolution: state.resolution, fps: state.fps, audio: state.audio, referenceImages: references.length }),
