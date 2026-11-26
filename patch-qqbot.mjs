@@ -554,7 +554,7 @@ const PATCHES = [
     snippet: 'reminders.js',
     anchor: [
       '    // ── 中间件链 ──',
-      '    setupMiddlewares(bot, config, manager, logger);',
+      '    setupMiddlewares(bot, config, manager, logger, ctx);',
     ],
     needsFs: false,
   },
@@ -562,7 +562,7 @@ const PATCHES = [
     name: 'persona-sleep-register',
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'persona-sleep-register.js',
-    anchor: ['    setupMiddlewares(bot, config, manager, logger);'],
+    anchor: ['    setupMiddlewares(bot, config, manager, logger, ctx);'],
     needsFs: false,
   },
   {
@@ -1039,6 +1039,27 @@ const PATCHES = [
     file: join(PKG, 'gateway', 'bootstrap.js'),
     snippet: 'image-generation-tool.js',
     anchor: ['    setupMediaArchive(ctx, bot, manager, config, logger);'],
+    needsFs: false,
+  },
+  {
+    name: 'animation-generation-helper',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'animation-generation-helper.js',
+    anchor: null,
+    needsFs: false,
+  },
+  {
+    name: 'animation-generation-tool',
+    file: join(PKG, 'gateway', 'bootstrap.js'),
+    snippet: 'animation-generation-tool.js',
+    anchor: ['    setupMediaArchive(ctx, bot, manager, config, logger);'],
+    needsFs: false,
+  },
+  {
+    name: 'animation-generation-inbound',
+    file: join(PKG, 'transport', 'inbound.js'),
+    snippet: 'animation-generation-inbound.js',
+    anchor: ['    record.agent.followup(message);'],
     needsFs: false,
   },
   {

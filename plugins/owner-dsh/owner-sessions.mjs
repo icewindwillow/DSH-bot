@@ -35,6 +35,22 @@ function liveBoundary(agents, sessionId) {
   return agent ? agents.turnBoundaryOf(agent.session) : undefined;
 }
 
+async function lastExcerpt(sessions, sessionId, signal) {
+  try {
+    const result = await sessions.events({ address: address(sessionId), maxMessages: 20 }, signal);
+    const events = (result.records ?? []).filter(frame => frame.type === 'event').map(frame => frame.event);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const item = events[index];
+      if (item.type !== 'assistant/message' || item.data?.interrupted) continue;
+      const content = Array.isArray(item.data?.message?.content) ? item.data.message.content : [];
+      const text = content.filter(part => part.type === 'text').map(part => part.text).join('').replace(/\s+/g, ' ').trim();
+      if (text) return [...text].slice(0, 160).join('');
+    }
+  }
+  catch { /* 单个会话读不到时不影响列表 */ }
+  return '';
+}
+
 const memberSession = (item, privatePath) =>
   item.cwd === privatePath && item.projections?.values?.agentPreset === memberPreset;
 
@@ -72,6 +88,51 @@ async function candidates(workspaces, sessions, agents, action, signal, privateP
       ? { ...target, start: turn.openTurnStartSeq, turn: turn.lastTurn } : undefined;
   });
   return { status: 'candidates', targets: entries.filter(Boolean), more: matching.length > choiceLimit };
+}
+
+async function listActive(workspaces, sessions, action, signal, privatePath, lifetime) {
+  const snapshot = await baseline(workspaces, signal);
+  const visible = privatePath ? snapshot.items.filter(item => item.path === privatePath) : snapshot.items;
+  const requested = String(action.workspace ?? '').trim();
+  let selected = visible;
+  if (requested && !/^(?:全部|所有|当前|all)$/iu.test(requested)) {
+    selected = privatePath && ['我的工作区', '自己的工作区', '我的'].includes(requested)
+      ? visible : pickTitles(visible, requested);
+    if (!selected.length) return { status: 'workspace-missing' };
+    if (selected.length > 1) return { status: 'workspace-ambiguous', names: selected.slice(0, choiceLimit).map(item => nameOf(item.title)) };
+  }
+  const archived = new Set(snapshot.archivedSessionIds);
+  const { items } = await sessions.list({}, signal);
+  const cutoff = Date.now() - 24 * 60 * 60_000;
+  const rows = [];
+  for (const workspace of selected) {
+    const memberIds = new Set(workspace.sessionIds);
+    for (const item of items) {
+      if (!memberIds.has(item.sessionId) || archived.has(item.sessionId) ||
+          item.parentSessionId || item.origin || item.formatStatus === 'migration-required') continue;
+      if (privatePath && !memberSession(item, privatePath)) continue;
+      const updatedAt = Number(item.updatedAt ?? 0);
+      if (!item.running && updatedAt < cutoff) continue;
+      rows.push({
+        workspaceId: workspace.workspaceId,
+        path: workspace.path,
+        workspace: nameOf(workspace.title, '未命名工作区'),
+        sessionId: item.sessionId,
+        title: nameOf(item.projections?.values?.title, '未命名会话'),
+        running: item.running === true,
+        updatedAt,
+      });
+    }
+  }
+  rows.sort((left, right) => Number(right.running) - Number(left.running) || right.updatedAt - left.updatedAt);
+  const running = rows.filter(row => row.running);
+  const selectedRows = running.length ? running : rows;
+  const limited = selectedRows.slice(0, choiceLimit);
+  const targets = await Promise.all(limited.map(async row => ({
+    ...row,
+    excerpt: await lastExcerpt(sessions, row.sessionId, AbortSignal.any([lifetime, AbortSignal.timeout(1200)])),
+  })));
+  return { status: 'list', targets, more: selectedRows.length > limited.length, runningOnly: running.length > 0 };
 }
 
 async function stillInWorkspace(workspaces, sessions, target, signal, privatePath) {
@@ -140,11 +201,17 @@ async function readJson(req) {
 }
 
 function parseAction(body) {
-  if (!idPattern.test(body?.id ?? '') || !['watch', 'send'].includes(body.operation) ||
-      typeof body.workspace !== 'string' || !body.workspace.trim() || body.workspace.length > 180 ||
-      (body.session !== undefined && (typeof body.session !== 'string' || body.session.length > 180))) return;
+  if (!idPattern.test(body?.id ?? '') || !['watch', 'send', 'list'].includes(body.operation)) return;
+  if (body.workspace !== undefined && (typeof body.workspace !== 'string' || body.workspace.length > 180)) return;
+  if (body.operation !== 'list' && (typeof body.workspace !== 'string' || !body.workspace.trim())) return;
+  if (body.session !== undefined && (typeof body.session !== 'string' || body.session.length > 180)) return;
   if (body.operation === 'send' && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 3000)) return;
-  return { id: body.id, operation: body.operation, workspace: body.workspace.trim(), session: body.session?.trim(), text: typeof body.text === 'string' ? body.text.trim() : undefined };
+  return {
+    id: body.id, operation: body.operation,
+    workspace: typeof body.workspace === 'string' ? body.workspace.trim() : '',
+    session: body.session?.trim(),
+    text: typeof body.text === 'string' ? body.text.trim() : undefined,
+  };
 }
 
 export function createOwnerSessions({ workspaces, sessions, agents, dbPath, lifetime, loadAccess, logger, ownWorkspace }) {
@@ -260,6 +327,7 @@ export function createOwnerSessions({ workspaces, sessions, agents, dbPath, life
   async function start(action, identity) {
     const owner = identity.principal;
     const privatePath = identity.owner ? undefined : ownWorkspace(owner);
+    if (action.operation === 'list') return listActive(workspaces, sessions, action, signal(), privatePath, lifetime);
     const done = db.prepare('SELECT * FROM sent_owner_prompts WHERE id=? AND owner=?').get(action.id, owner);
     if (done?.admitted) return { status: 'sent', target: { title: done.title, workspace: done.workspace } };
     const found = await candidates(workspaces, sessions, agents, action, signal(), privatePath);
@@ -279,7 +347,9 @@ export function createOwnerSessions({ workspaces, sessions, agents, dbPath, life
   async function route(req, path) {
     const actor = wireIdentity(req.headers);
     const access = await loadAccess();
-    const identity = actor.scope === 'c2c' && access.identify(actor);
+    const direct = access.identify(actor);
+    // 群的 list 查询只读，允许已绑定的群主人；watch/send 仍保持私聊专用。
+    const identity = direct && (actor.scope === 'c2c' || direct.owner) ? direct : undefined;
     if (!identity) return { code: 403, body: { status: 'forbidden' } };
     const owner = identity.principal;
     if (path === '/owner/notifications' && req.method === 'GET') {
@@ -306,6 +376,7 @@ export function createOwnerSessions({ workspaces, sessions, agents, dbPath, life
     if (path === '/owner/actions' && req.method === 'POST') {
       const action = parseAction(await readJson(req).catch(() => null));
       if (!action) return { code: 400, body: { status: 'invalid' } };
+      if (actor.scope === 'group' && action.operation !== 'list') return { code: 403, body: { status: 'forbidden' } };
       return { code: 200, body: await track(`${owner}:${action.id}`, () => start(action, identity)) };
     }
     if (path === '/owner/choose' && req.method === 'POST') {

@@ -117,6 +117,17 @@ test('watches one selected turn through approval and completion; sends to a name
     const blocked = await call(controller, '/owner/actions', { id: id('a'), operation: 'watch', workspace: 'SIMDM' },
       { scope: 'group', sender: owner.sender, group: 'qq-group' });
     assert.equal(blocked.code, 403);
+    records = [event('assistant/message', 80, { message: { content: [{ type: 'text', text: '正在跑第 4 次跨房间战斗' }] } })];
+    const listed = await start({ id: id('e'), operation: 'list', workspace: 'SIMDM' });
+    assert.equal(listed.body.status, 'list');
+    assert.equal(listed.body.runningOnly, true);
+    assert.deepEqual(listed.body.targets.map(item => item.title), ['关卡调试', '回归检查']);
+    assert.match(listed.body.targets[0].excerpt, /第 4 次跨房间战斗/);
+    const groupListed = await call(controller, '/owner/actions',
+      { id: id('f'), operation: 'list', workspace: 'SIMDM' },
+      { scope: 'group', sender: owner.sender, group: 'qq-group' });
+    assert.equal(groupListed.body.status, 'list');
+    records = [];
     const requested = await start({ id: id('a'), operation: 'watch', workspace: 'simdm' });
     assert.equal(requested.body.status, 'choose');
     assert.deepEqual(requested.body.choices.map(x => x.title), ['关卡调试', '回归检查']);
@@ -166,6 +177,11 @@ test('owner natural commands and private-only notification text', async () => {
   assert.deepEqual(parseOwnerAction('小易，盯一下 SIMDM 里正在跑的任务，结束了叫我'), { operation: 'watch', workspace: 'SIMDM' });
   assert.deepEqual(parseOwnerAction('小易，给 SIMDM 工作区的「回归检查」发消息：先看日志'),
     { operation: 'send', workspace: 'SIMDM', session: '回归检查', text: '先看日志' });
+  assert.deepEqual(parseOwnerAction('你看一下当前在推进的任务对话'), { operation: 'list', workspace: '' });
+  assert.deepEqual(parseOwnerAction('小易，帮我看一下 DSH 的 SIMDM 的工作区，还在继续推进工作吗'),
+    { operation: 'list', workspace: 'SIMDM' });
+  assert.deepEqual(parseOwnerAction('小易，帮我在 DSH 里看一下，SIMDM 的工作区还在推进吗'),
+    { operation: 'list', workspace: 'SIMDM' });
   assert.equal(parseOwnerAction('这个任务什么时候完成'), undefined);
   const delivered = [];
   let acknowledged = false;

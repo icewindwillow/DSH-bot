@@ -1,14 +1,36 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const hint = '可以用 /dsh watch SIMDM 盯任务，或用 /dsh send SIMDM "会话名" -- 消息内容 给已有会话发消息。';
+const hint = '可以用 /dsh list [工作区] 看正在推进的任务对话，/dsh watch SIMDM 盯任务，或用 /dsh send SIMDM "会话名" -- 消息内容 给已有会话发消息。';
 const undecorate = text => text.trim().replace(/^(?:「(.+)」|"(.+)")$/, (_, a, b) => a ?? b);
+const taskWorkspacePattern = /([^\s，,。！!]{1,40})\s*的?\s*工作区/gu;
+
+export function isTaskConversationQuery(input) {
+  const text = String(input ?? '').trim();
+  if (!text) return false;
+  const look = /(?:看一下|看看|查一下|查查|列一下|列出|看下)/u.test(text);
+  const task = /(?:任务对话|任务会话|正在推进的任务|在推进的任务|在跑的任务|运行中的任务|会话列表)/u.test(text);
+  const workspace = /工作区/u.test(text)
+    && /(?:还在|是否|继续|推进|在跑|运行中|运行|状态|进展)/u.test(text);
+  const taskProgress = /(?:任务对话|任务会话)/u.test(text)
+    && /(?:推进|在跑|运行中|进行中)/u.test(text);
+  return (look && (task || workspace)) || taskProgress;
+}
+
+function taskConversationWorkspace(input) {
+  const matches = [...String(input ?? '').matchAll(taskWorkspacePattern)];
+  const name = matches.at(-1)?.[1]?.trim().replace(/的$/u, '');
+  return name ? undecorate(name) : '';
+}
 
 export function parseOwnerAction(input) {
   const plainChoice = /^选\s*(?:([a-f\d]{8})\s+)?(\d{1,2})$/i.exec(input);
   const commandChoice = /^\/dsh\s+choose\s+(?:([a-f\d]{8})\s+)?(\d{1,2})$/i.exec(input);
   const choice = commandChoice ?? plainChoice;
   if (choice) return { operation: 'choose', selection: choice[1]?.toLowerCase(), number: Number(choice[2]), allowFallback: !!plainChoice };
+  const list = /^\/dsh\s+list(?:\s+([\s\S]+))?$/i.exec(input);
+  if (list) return { operation: 'list', workspace: undecorate(list[1] ?? '') };
+  if (isTaskConversationQuery(input)) return { operation: 'list', workspace: taskConversationWorkspace(input) };
   const watch = /^\/dsh\s+watch\s+(.+)$/i.exec(input);
   if (watch) return { operation: 'watch', workspace: undecorate(watch[1]) };
   const send = /^\/dsh\s+send\s+([\s\S]+?)\s+--\s+([\s\S]+)$/i.exec(input);
@@ -33,6 +55,20 @@ export function parseOwnerAction(input) {
 function describe(body) {
   const target = body.target && `「${body.target.workspace}」的「${body.target.title}」`;
   switch (body.status) {
+    case 'list': {
+      if (!body.targets?.length) return '当前没有正在推进的任务对话。';
+      const lines = body.targets.map((item, index) => {
+        const status = item.running ? '运行中' : '最近活动';
+        const excerpt = item.excerpt ? `\n   ${item.excerpt}` : '';
+        return `${index + 1}. ${item.workspace} / ${item.title} · ${status}${excerpt}`;
+      });
+      const heading = body.runningOnly === false
+        ? '当前没有运行中的任务对话，最近活跃：'
+        : '当前在推进的任务对话：';
+      return [heading, ...lines, body.more ? '只列了前 8 个，可以指定工作区再查。' : '']
+        .filter(Boolean).join('\n');
+    }
+    case 'forbidden': return '这个操作只有主人可以使用。';
     case 'watching': return `我在盯${target}当前这一轮。需要审批或这一轮结束时，我会私聊提醒你。`;
     case 'already-finished': return `${target}这一轮的监听已经结束。`;
     case 'sent': return `消息已交给${target}。如果那边正在跑，会按 DSH 的队列接收。`;
@@ -55,7 +91,7 @@ function describe(body) {
   }
 }
 
-export async function handleOwnerAction(action, { bridge, actor, messageId, reply, next }) {
+export async function handleOwnerAction(action, { bridge, actor, messageId, reply, next, render }) {
   if (action.operation === 'help') return reply(hint);
   const id = createHash('sha256').update(JSON.stringify([actor.sender, 'owner-actions', messageId])).digest('hex').slice(0, 24);
   let body;
@@ -67,7 +103,15 @@ export async function handleOwnerAction(action, { bridge, actor, messageId, repl
   }
   if (action.allowFallback && body.status === 'no-choice') return next();
   if (body.status === 'host-error') return reply('DSH 暂时无法处理这个请求，请在桌面确认会话状态。');
-  return reply(describe(body));
+  const text = describe(body);
+  if (body.status === 'list' && typeof render === 'function') {
+    try {
+      const rendered = await render(text);
+      if (typeof rendered === 'string' && rendered.trim()) return reply(rendered);
+    }
+    catch { /* 人格渲染失败时回退到确定性列表 */ }
+  }
+  return reply(text);
 }
 
 const notices = {

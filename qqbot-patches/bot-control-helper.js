@@ -46,6 +46,17 @@ function setupBotControl(ctx, manager, config, logger) {
         if (req.method === 'GET' && url.pathname === '/health')
             return send(res, 200, { ok: true, service: 'qqbot-control', port, model: globalThis.__qqbotModelHealth?.() });
 
+        if (req.method === 'POST' && url.pathname === '/animation/send') {
+            try {
+                const body = await readBody(req);
+                const deliver = globalThis.__qqbotAnimationSendVideo;
+                if (typeof deliver !== 'function') return send(res, 503, { ok: false, error: '动画发送模块未就绪' });
+                return send(res, 200, await deliver({ groupOpenid: body?.groupOpenid, file: body?.file, content: body?.content }));
+            } catch (err) {
+                return send(res, 400, { ok: false, error: String(err?.message ?? err) });
+            }
+        }
+
         if (req.method === 'POST' && url.pathname === '/session/new') {
             const body = await readBody(req);
             const gid = groupIdOf(body);
@@ -53,6 +64,14 @@ function setupBotControl(ctx, manager, config, logger) {
                 return send(res, 400, { ok: false, error: 'groupOpenid 不能为空' });
             try {
                 await manager.remove('group', gid);
+                // /new starts a fresh conversation and must also drop short-lived
+                // group context that is injected into the next prompt.
+                globalThis.__qqbotRecentMessages?.delete?.(gid);
+                globalThis.__qqbotPendingInbound?.delete?.(gid);
+                globalThis.__qqbotSpeakers?.delete?.(gid);
+                globalThis.__qqbotLastBotReply?.delete?.(gid);
+                globalThis.__qqbotLastBotText?.delete?.(gid);
+                globalThis.__qqbotUnifiedRecall?.clearScope?.(`qq:group:${gid}`);
                 console.log(`[im-qqbot] 控制接口：群 ${gid} 已开新会话`);
                 return send(res, 200, { ok: true, action: 'new', groupOpenid: gid });
             }

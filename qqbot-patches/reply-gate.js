@@ -35,6 +35,8 @@
         const content = String(msg.content ?? '').trim();
         if (content === '')
             return next();
+        if (senderBypass({ id: msg.senderId, name: msg.senderName }) && content.startsWith('小易'))
+            return next();
         // 只叫了名字、没有别的内容：等 2.5 秒看有没有补充，避免「嗯喵？」回一条、请求又回一条
         try {
             const fs0 = process.getBuiltinModule?.('node:fs');

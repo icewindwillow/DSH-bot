@@ -3,14 +3,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const personalSkillId = 'owner-dsh';
+export const personalSkillId = 'local-task-shell';
+export const legacyPersonalSkillId = 'owner-dsh';
 const validId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
 const digest = value => createHash('sha256').update(value).digest('hex');
 const codePattern = /^[A-F0-9]{10}$/;
 const linkLifetime = 5 * 60_000;
 
 export function personalDshGrants(roleDoc, peopleDoc, state, owner) {
-  const skill = roleDoc?.skills?.find(row => row?.id === personalSkillId);
+  const skill = roleDoc?.skills?.find(row =>
+    (row?.id === personalSkillId || row?.id === legacyPersonalSkillId) &&
+    row.scope === 'personal' && row.kind === 'access');
   if (!skill || skill.scope !== 'personal' || skill.kind !== 'access' || skill.enabled === false) return [];
   const rows = Array.isArray(peopleDoc?.people) ? peopleDoc.people : [];
   const counts = new Map();
@@ -26,7 +29,8 @@ export function personalDshGrants(roleDoc, peopleDoc, state, owner) {
     const groups = Object.create(null);
     for (const group of Array.isArray(row.groups) ? row.groups : []) {
       if (!validId(group)) continue;
-      const toggle = state?.[`${group}:openid:${principal}:${personalSkillId}`];
+      const toggle = state?.[`${group}:openid:${principal}:${personalSkillId}`]
+        ?? state?.[`${group}:openid:${principal}:${legacyPersonalSkillId}`];
       if (toggle?.by === 'panel' && toggle.enabled === true) groups[group] = principal;
     }
     if (!Object.keys(groups).length) continue;
